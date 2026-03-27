@@ -1547,9 +1547,9 @@ All list endpoints support pagination with `offset` and `limit` parameters:
 ### Sorting
 
 Sort parameters use the pattern `[+-]fieldName`:
-- `+` prefix = descending order
-- `-` prefix = ascending order
-- Example: `sort=+severity&sort=-created`
+- `-` prefix = descending order (newest/highest first)
+- `+` prefix = ascending order (oldest/lowest first)
+- Example: `sort=-created_at` (newest first), `sort=+severity` (lowest first)
 
 ### Error Responses
 

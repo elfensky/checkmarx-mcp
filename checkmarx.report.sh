@@ -69,7 +69,8 @@ cx_get() {
 # --- Step 2: Look up application to get project IDs ---
 cx_log "Looking up application: ${APP_NAME}..."
 
-APP_RESPONSE=$(cx_get "${BASE}/api/applications?name=${APP_NAME}&limit=100")
+APP_NAME_ENCODED=$(jq -rn --arg n "${APP_NAME}" '$n | @uri')
+APP_RESPONSE=$(cx_get "${BASE}/api/applications?name=${APP_NAME_ENCODED}&limit=100")
 
 # Exact-match filter (the API name param may do substring matching)
 APP_JSON=$(echo "${APP_RESPONSE}" | jq -e --arg name "${APP_NAME}" \
@@ -91,10 +92,8 @@ fi
 cx_log "Found ${PROJECT_COUNT} project(s) in '${APP_NAME}'"
 
 # --- Step 3: Fetch project details (paginated) ---
-# Build ids query string: ids=uuid1&ids=uuid2&...
-IDS_QUERY=$(echo "${PROJECT_IDS_JSON}" | jq -r '.[]' | while read -r pid; do
-  printf "ids=%s&" "${pid}"
-done)
+# Build comma-separated ids string for the ids query parameter
+IDS_CSV=$(echo "${PROJECT_IDS_JSON}" | jq -r 'join(",")')
 
 cx_log "Fetching project details..."
 
@@ -103,7 +102,7 @@ OFFSET=0
 LIMIT=100
 
 while true; do
-  PAGE_RESPONSE=$(cx_get "${BASE}/api/projects?${IDS_QUERY}offset=${OFFSET}&limit=${LIMIT}")
+  PAGE_RESPONSE=$(cx_get "${BASE}/api/projects?ids=${IDS_CSV}&offset=${OFFSET}&limit=${LIMIT}")
 
   PAGE_PROJECTS=$(echo "${PAGE_RESPONSE}" | jq '.projects // []')
   PAGE_SIZE=$(echo "${PAGE_PROJECTS}" | jq 'length')
@@ -124,10 +123,17 @@ cx_log "Fetched ${TOTAL_FETCHED} project(s)"
 # --- Step 4: Fetch last scan date per project ---
 cx_log "Fetching last scan dates..."
 
-declare -A LAST_SCAN_MAP
+SCAN_DATE_FILE=$(mktemp)
+trap "rm -f '${SCAN_DATE_FILE}'" EXIT
+
+SCAN_FAIL_COUNT=0
 
 while read -r pid; do
-  SCAN_RESPONSE=$(cx_get "${BASE}/api/scans?project-id=${pid}&limit=1&sort=-createdAt&statuses=Completed" 2>/dev/null) || SCAN_RESPONSE='{"scans":[]}'
+  SCAN_RESPONSE=$(cx_get "${BASE}/api/scans?project-id=${pid}&limit=1&sort=-created_at&statuses=Completed" 2>/dev/null) || {
+    SCAN_FAIL_COUNT=$((SCAN_FAIL_COUNT + 1))
+    cx_vlog "WARN: scan lookup failed for project ${pid:0:8}..."
+    SCAN_RESPONSE='{"scans":[]}'
+  }
 
   LAST_SCAN_DATE=$(echo "${SCAN_RESPONSE}" | jq -r '
     if (.scans // []) | length > 0 then .scans[0].createdAt
@@ -135,9 +141,13 @@ while read -r pid; do
     end
   ')
 
-  LAST_SCAN_MAP["${pid}"]="${LAST_SCAN_DATE}"
+  echo "${pid}|${LAST_SCAN_DATE}" >> "${SCAN_DATE_FILE}"
   cx_vlog "Fetched scan date for project ${pid:0:8}..."
 done < <(echo "${ALL_PROJECTS}" | jq -r '.[].id')
+
+if [ "${SCAN_FAIL_COUNT}" -gt 0 ]; then
+  cx_log "WARNING: ${SCAN_FAIL_COUNT} scan lookups failed (run with -v for details)"
+fi
 
 # --- Step 5: Generate CSV ---
 cx_log "Generating CSV: ${OUTPUT_FILE}"
@@ -157,7 +167,8 @@ while read -r project_json; do
   fi
 
   PID=$(echo "${project_json}" | jq -r '.id')
-  SCAN_DATE="${LAST_SCAN_MAP[${PID}]:-N/A}"
+  SCAN_DATE=$(grep "^${PID}|" "${SCAN_DATE_FILE}" 2>/dev/null | cut -d'|' -f2-)
+  SCAN_DATE="${SCAN_DATE:-N/A}"
 
   # CSV-escape: double-quote fields, escape internal quotes per RFC 4180
   printf '"%s","%s","%s","%s","%s"\n' \
