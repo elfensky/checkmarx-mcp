@@ -16,7 +16,7 @@
 #   See also:   docs/rest-api-reference.md § 6 (Results API)
 #
 # Usage:
-#   ./utils/checkmarx.list-results.sh [-v|--verbose] --scan-id ID [--severity S] [--state S] [--limit N]
+#   ./utils/checkmarx.list-results.sh [-v|--verbose] --scan-id ID [--severity S] [--state S] [--status S] [--limit N]
 #
 # Required:
 #   --scan-id ID     UUID of the scan to fetch results for
@@ -27,6 +27,8 @@
 #                    Values: CRITICAL, HIGH, MEDIUM, LOW, INFO
 #   --state S        Comma-separated state filter.
 #                    Values: TO_VERIFY, NOT_EXPLOITABLE, PROPOSED_NOT_EXPLOITABLE, CONFIRMED, URGENT
+#   --status S       Comma-separated status filter (finding lifecycle).
+#                    Values: NEW, RECURRENT, FIXED
 #   --limit N        Return at most N results (single page, no pagination)
 #
 # Output:
@@ -37,6 +39,7 @@
 # Examples:
 #   ./utils/checkmarx.list-results.sh --scan-id "uuid"
 #   ./utils/checkmarx.list-results.sh --scan-id "uuid" --severity "HIGH,CRITICAL"
+#   ./utils/checkmarx.list-results.sh --scan-id "uuid" --status "NEW" --severity "HIGH,CRITICAL"
 #   ./utils/checkmarx.list-results.sh --scan-id "uuid" --state "TO_VERIFY" --limit 10
 #   ./utils/checkmarx.list-results.sh --scan-id "uuid" | jq '[.[] | {type, severity, status}]'
 #   ./utils/checkmarx.list-results.sh --scan-id "uuid" | jq 'group_by(.severity) | map({(.[0].severity): length}) | add'
@@ -57,19 +60,21 @@ set -- "${CX_POSITIONAL_ARGS[@]+"${CX_POSITIONAL_ARGS[@]}"}"
 SCAN_ID=""
 SEVERITY=""
 STATE=""
+STATUS=""
 LIMIT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scan-id)  SCAN_ID="$2"; shift 2 ;;
     --severity) SEVERITY="$2"; shift 2 ;;
     --state)    STATE="$2"; shift 2 ;;
+    --status)   STATUS="$2"; shift 2 ;;
     --limit)    LIMIT="$2"; shift 2 ;;
     *)          echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ -z "${SCAN_ID}" ]; then
-  echo "Usage: $0 [-v|--verbose] --scan-id ID [--severity S] [--state S] [--limit N]" >&2
+  echo "Usage: $0 [-v|--verbose] --scan-id ID [--severity S] [--state S] [--status S] [--limit N]" >&2
   exit 1
 fi
 
@@ -81,6 +86,7 @@ cx_authenticate
 PARAMS=("scan-id=${SCAN_ID}")
 [ -n "${SEVERITY}" ] && PARAMS+=("severity=${SEVERITY}")
 [ -n "${STATE}" ]    && PARAMS+=("state=${STATE}")
+[ -n "${STATUS}" ]   && PARAMS+=("status=${STATUS}")
 
 QUERY=$(IFS='&'; echo "${PARAMS[*]}")
 URL="${BASE}/api/results?${QUERY}"

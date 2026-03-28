@@ -306,11 +306,15 @@ export class CheckmarxClient {
   }
 
   /** Get scan results summary for one or more scans. */
-  async scanSummary(scanIds: string[]) {
+  async scanSummary(
+    scanIds: string[],
+    options?: { includeQueries?: boolean; includeFiles?: boolean }
+  ) {
     const params = scanIds.map((id) => `scan-ids=${id}`).join("&");
-    return this.get(
-      `/api/scan-summary?${params}&include-severity-status=true`
-    );
+    let qs = `${params}&include-severity-status=true`;
+    if (options?.includeQueries) qs += "&include-queries=true";
+    if (options?.includeFiles) qs += "&include-files=true";
+    return this.get(`/api/scan-summary?${qs}`);
   }
 
   /** List vulnerability results for a scan. */
@@ -318,12 +322,14 @@ export class CheckmarxClient {
     scanId: string;
     severity?: string;
     state?: string;
+    status?: string;
     limit?: number;
   }) {
     const query = new URLSearchParams();
     query.set("scan-id", params.scanId);
     if (params.severity) query.set("severity", params.severity);
     if (params.state) query.set("state", params.state);
+    if (params.status) query.set("status", params.status);
 
     const path = `/api/results?${query.toString()}`;
 
@@ -334,6 +340,94 @@ export class CheckmarxClient {
       return data.results ?? [];
     }
     return this.paginate(path, "results");
+  }
+
+  /** List projects with their last scan information. */
+  async listProjectsLastScan(params?: {
+    applicationId?: string;
+    scanStatus?: string;
+    sastStatus?: string;
+    scaStatus?: string;
+    kicsStatus?: string;
+    apisecStatus?: string;
+    branch?: string;
+    useMainBranch?: boolean;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    if (params?.applicationId) query.set("application_id", params.applicationId);
+    if (params?.scanStatus) query.set("scan_status", params.scanStatus);
+    if (params?.sastStatus) query.set("sast_status", params.sastStatus);
+    if (params?.scaStatus) query.set("sca_status", params.scaStatus);
+    if (params?.kicsStatus) query.set("kics_status", params.kicsStatus);
+    if (params?.apisecStatus) query.set("apisec_status", params.apisecStatus);
+    if (params?.branch) query.set("branch", params.branch);
+    if (params?.useMainBranch) query.set("use_main_branch", "true");
+
+    if (params?.limit) query.set("limit", String(params.limit));
+    query.set("offset", "0");
+
+    const qs = query.toString();
+    const path = `/api/projects/last-scan?${qs}`;
+
+    const data = await this.get<Record<string, unknown>>(path);
+
+    // Response shape may vary — handle array or wrapped object
+    if (Array.isArray(data)) return data;
+    for (const key of ["projects", "items"]) {
+      if (Array.isArray((data as Record<string, unknown>)[key])) {
+        return (data as Record<string, unknown>)[key];
+      }
+    }
+    return data;
+  }
+
+  /** Get aggregated SAST results grouped by category. */
+  async sastAggregate(params: {
+    scanId: string;
+    groupByFields: string[];
+    severity?: string;
+    status?: string;
+    language?: string;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    query.set("scan-id", params.scanId);
+    for (const field of params.groupByFields) {
+      query.append("group-by-field", field);
+    }
+    if (params.severity) query.set("severity", params.severity);
+    if (params.status) query.set("status", params.status);
+    if (params.language) query.set("language", params.language);
+    if (params.limit) query.set("limit", String(params.limit));
+
+    return this.get(`/api/sast-scan-summary/aggregate?${query.toString()}`);
+  }
+
+  /** Compare SAST results between two scans. */
+  async sastCompare(params: {
+    scanId: string;
+    baseScanId: string;
+    groupByFields: string[];
+    severity?: string;
+    status?: string;
+    language?: string;
+    limit?: number;
+  }) {
+    const query = new URLSearchParams();
+    query.set("scan-id", params.scanId);
+    query.set("base-scan-id", params.baseScanId);
+    for (const field of params.groupByFields) {
+      query.append("group-by-field", field);
+    }
+    if (params.severity) query.set("severity", params.severity);
+    if (params.status) query.set("status", params.status);
+    if (params.language) query.set("language", params.language);
+    if (params.limit) query.set("limit", String(params.limit));
+
+    return this.get(
+      `/api/sast-scan-summary/compare/aggregate?${query.toString()}`
+    );
   }
 
   /** List applications, optionally filtered by name. */
@@ -358,6 +452,66 @@ export class CheckmarxClient {
       return (data as { groups: unknown[] }).groups;
     }
     return data;
+  }
+
+  /** Get latest triage predicates for a SAST finding. */
+  async getSastPredicates(params: {
+    similarityId: string;
+    projectIds?: string;
+    scanId?: string;
+  }) {
+    const query = new URLSearchParams();
+    if (params.projectIds) query.set("project-ids", params.projectIds);
+    if (params.scanId) query.set("scan-id", params.scanId);
+
+    const qs = query.toString();
+    return this.get(
+      `/api/sast-results-predicates/${params.similarityId}/latest${qs ? `?${qs}` : ""}`
+    );
+  }
+
+  /** List SAST-specific results with rich filtering. */
+  async listSastResults(params: {
+    scanId: string;
+    severity?: string;
+    status?: string;
+    state?: string;
+    query?: string;
+    language?: string;
+    cweId?: string;
+    sourceFile?: string;
+    sinkFile?: string;
+    compliance?: string;
+    category?: string;
+    applyPredicates?: boolean;
+    includeNodes?: boolean;
+    limit?: number;
+  }) {
+    const q = new URLSearchParams();
+    q.set("scan-id", params.scanId);
+    if (params.severity) q.set("severity", params.severity);
+    if (params.status) q.set("status", params.status);
+    if (params.state) q.set("state", params.state);
+    if (params.query) q.set("query", params.query);
+    if (params.language) q.set("language", params.language);
+    if (params.cweId) q.set("cweId", params.cweId);
+    if (params.sourceFile) q.set("source-file", params.sourceFile);
+    if (params.sinkFile) q.set("sink-file", params.sinkFile);
+    if (params.compliance) q.set("compliance", params.compliance);
+    if (params.category) q.set("category", params.category);
+    if (params.applyPredicates !== undefined)
+      q.set("apply-predicates", String(params.applyPredicates));
+    if (params.includeNodes) q.set("include-nodes", "true");
+
+    const path = `/api/sast-results?${q.toString()}`;
+
+    if (params.limit) {
+      const data = await this.get<{ results: unknown[] }>(
+        `${path}&offset=0&limit=${params.limit}`
+      );
+      return data.results ?? [];
+    }
+    return this.paginate(path, "results");
   }
 
   /** List SAST query presets. */

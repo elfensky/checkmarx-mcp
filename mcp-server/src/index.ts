@@ -166,8 +166,22 @@ server.tool(
       .array(z.string())
       .min(1)
       .describe("Array of scan UUIDs to summarize"),
+    include_queries: z
+      .boolean()
+      .optional()
+      .describe("Include per-query breakdown in the response"),
+    include_files: z
+      .boolean()
+      .optional()
+      .describe("Include per-file breakdown in the response"),
   },
-  async ({ scan_ids }) => handleTool(() => client.scanSummary(scan_ids))
+  async ({ scan_ids, include_queries, include_files }) =>
+    handleTool(() =>
+      client.scanSummary(scan_ids, {
+        includeQueries: include_queries,
+        includeFiles: include_files,
+      })
+    )
 );
 
 // ---------------------------------------------------------------------------
@@ -191,6 +205,12 @@ server.tool(
       .describe(
         "Comma-separated state filter. Values: TO_VERIFY, NOT_EXPLOITABLE, PROPOSED_NOT_EXPLOITABLE, CONFIRMED, URGENT"
       ),
+    status: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated status filter (finding lifecycle). Values: NEW, RECURRENT, FIXED"
+      ),
     limit: z
       .number()
       .int()
@@ -198,9 +218,185 @@ server.tool(
       .optional()
       .describe("Maximum number of results to return. Omit to get all."),
   },
-  async ({ scan_id, severity, state, limit }) =>
+  async ({ scan_id, severity, state, status, limit }) =>
     handleTool(() =>
-      client.listResults({ scanId: scan_id, severity, state, limit })
+      client.listResults({ scanId: scan_id, severity, state, status, limit })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_projects_last_scan
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "list_projects_last_scan",
+  "List projects with their last scan information in a single call. Returns project details plus latest scan metadata (status, engines, dates). Far more efficient than fetching scans per-project. Useful for project inventory and status reports.",
+  {
+    application_id: z
+      .string()
+      .optional()
+      .describe("Filter by application UUID"),
+    scan_status: z
+      .string()
+      .optional()
+      .describe("Filter by overall scan status (e.g., Completed, Failed)"),
+    sast_status: z.string().optional().describe("Filter by SAST engine status"),
+    sca_status: z.string().optional().describe("Filter by SCA engine status"),
+    kics_status: z.string().optional().describe("Filter by KICS engine status"),
+    apisec_status: z
+      .string()
+      .optional()
+      .describe("Filter by API Security engine status"),
+    branch: z.string().optional().describe("Filter by branch name"),
+    use_main_branch: z
+      .boolean()
+      .optional()
+      .describe("Only include scans from the project's main branch"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Maximum number of results to return"),
+  },
+  async ({
+    application_id,
+    scan_status,
+    sast_status,
+    sca_status,
+    kics_status,
+    apisec_status,
+    branch,
+    use_main_branch,
+    limit,
+  }) =>
+    handleTool(() =>
+      client.listProjectsLastScan({
+        applicationId: application_id,
+        scanStatus: scan_status,
+        sastStatus: sast_status,
+        scaStatus: sca_status,
+        kicsStatus: kics_status,
+        apisecStatus: apisec_status,
+        branch,
+        useMainBranch: use_main_branch,
+        limit,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: sast_aggregate
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "sast_aggregate",
+  "Get aggregated SAST finding counts grouped by category (QUERY, SEVERITY, STATUS, SOURCE_FILE, SINK_FILE, LANGUAGE). Powers vulnerability distribution reports, top-N query lists, and severity breakdowns for a scan.",
+  {
+    scan_id: z.string().describe("Scan UUID to aggregate"),
+    group_by_fields: z
+      .array(
+        z.enum([
+          "QUERY",
+          "SEVERITY",
+          "STATUS",
+          "SOURCE_FILE",
+          "SINK_FILE",
+          "SOURCE_NODE",
+          "SINK_NODE",
+          "LANGUAGE",
+        ])
+      )
+      .min(1)
+      .describe("Fields to group results by"),
+    severity: z
+      .string()
+      .optional()
+      .describe("Comma-separated severity filter (HIGH, MEDIUM, LOW, INFO)"),
+    status: z
+      .string()
+      .optional()
+      .describe("Comma-separated status filter (NEW, RECURRENT)"),
+    language: z
+      .string()
+      .optional()
+      .describe("Comma-separated language filter"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Max results per page"),
+  },
+  async ({ scan_id, group_by_fields, severity, status, language, limit }) =>
+    handleTool(() =>
+      client.sastAggregate({
+        scanId: scan_id,
+        groupByFields: group_by_fields,
+        severity,
+        status,
+        language,
+        limit,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: sast_compare
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "sast_compare",
+  "Compare SAST results between two scans, showing NEW, RECURRENT, and FIXED finding counts grouped by LANGUAGE or QUERY. Use this for 'what changed' reports between scan runs.",
+  {
+    scan_id: z.string().describe("UUID of the newer scan"),
+    base_scan_id: z
+      .string()
+      .describe("UUID of the older scan to compare against"),
+    group_by_fields: z
+      .array(z.enum(["LANGUAGE", "QUERY"]))
+      .min(1)
+      .describe("Fields to group comparison by"),
+    severity: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated severity filter (CRITICAL, HIGH, MEDIUM, LOW, INFO)"
+      ),
+    status: z
+      .string()
+      .optional()
+      .describe("Comma-separated status filter (NEW, RECURRENT, FIXED)"),
+    language: z
+      .string()
+      .optional()
+      .describe("Comma-separated language filter"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Max results per page"),
+  },
+  async ({
+    scan_id,
+    base_scan_id,
+    group_by_fields,
+    severity,
+    status,
+    language,
+    limit,
+  }) =>
+    handleTool(() =>
+      client.sastCompare({
+        scanId: scan_id,
+        baseScanId: base_scan_id,
+        groupByFields: group_by_fields,
+        severity,
+        status,
+        language,
+        limit,
+      })
     )
 );
 
@@ -218,6 +414,128 @@ server.tool(
       .describe("Filter applications by name (substring match)"),
   },
   async ({ name }) => handleTool(() => client.listApplications({ name }))
+);
+
+// ---------------------------------------------------------------------------
+// Tool: get_sast_predicates
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "get_sast_predicates",
+  "Get the latest triage predicates for a SAST finding by its similarity ID. Returns severity overrides, state changes, and comments. Use this for compliance reporting and understanding triage decisions.",
+  {
+    similarity_id: z
+      .string()
+      .describe("Similarity ID of the SAST finding"),
+    project_ids: z
+      .string()
+      .optional()
+      .describe("Comma-separated project UUIDs to filter by"),
+    scan_id: z.string().optional().describe("Filter by scan UUID"),
+  },
+  async ({ similarity_id, project_ids, scan_id }) =>
+    handleTool(() =>
+      client.getSastPredicates({
+        similarityId: similarity_id,
+        projectIds: project_ids,
+        scanId: scan_id,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: list_sast_results
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "list_sast_results",
+  "List SAST-specific scan results with rich filtering. Unlike the generic list_results tool, this supports filtering by query name, language, CWE ID, source/sink files, compliance framework, and category. Returns SAST findings with full code-path context.",
+  {
+    scan_id: z.string().describe("Scan UUID"),
+    severity: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated severity filter (CRITICAL, HIGH, MEDIUM, LOW, INFO)"
+      ),
+    status: z
+      .string()
+      .optional()
+      .describe("Comma-separated status filter (NEW, RECURRENT)"),
+    state: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated state filter (TO_VERIFY, NOT_EXPLOITABLE, CONFIRMED, etc.)"
+      ),
+    query: z
+      .string()
+      .optional()
+      .describe("Filter by SAST query name (e.g., SQL_Injection)"),
+    language: z
+      .string()
+      .optional()
+      .describe("Comma-separated language filter"),
+    cwe_id: z.string().optional().describe("Filter by CWE ID"),
+    source_file: z
+      .string()
+      .optional()
+      .describe("Filter by source file path"),
+    sink_file: z.string().optional().describe("Filter by sink file path"),
+    compliance: z
+      .string()
+      .optional()
+      .describe("Filter by compliance framework"),
+    category: z.string().optional().describe("Filter by category"),
+    apply_predicates: z
+      .boolean()
+      .optional()
+      .describe("Apply triage predicates (default: true)"),
+    include_nodes: z
+      .boolean()
+      .optional()
+      .describe("Include source/sink node details"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Maximum results to return. Omit to get all."),
+  },
+  async ({
+    scan_id,
+    severity,
+    status,
+    state,
+    query,
+    language,
+    cwe_id,
+    source_file,
+    sink_file,
+    compliance,
+    category,
+    apply_predicates,
+    include_nodes,
+    limit,
+  }) =>
+    handleTool(() =>
+      client.listSastResults({
+        scanId: scan_id,
+        severity,
+        status,
+        state,
+        query,
+        language,
+        cweId: cwe_id,
+        sourceFile: source_file,
+        sinkFile: sink_file,
+        compliance,
+        category,
+        applyPredicates: apply_predicates,
+        includeNodes: include_nodes,
+        limit,
+      })
+    )
 );
 
 // ---------------------------------------------------------------------------

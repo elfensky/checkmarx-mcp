@@ -14,15 +14,19 @@
 #   cx_get URL           — authenticated GET with standard headers
 #   cx_paginate URL KEY  — fetches all pages, outputs merged JSON array
 #   cx_urlencode STR     — portable percent-encoding (no Python dependency)
+#   cx_format_csv FIELDS — reads JSON array from stdin, outputs CSV with header
+#   cx_format_table FIELDS — reads JSON array from stdin, outputs markdown table
 #
 # Globals set by cx_parse_flags:
 #   VERBOSE   — 0 or 1
 #   DRY_RUN   — 0 or 1 (for future write scripts)
 #   EXECUTE   — 0 or 1 (for future write scripts; --execute flips DRY_RUN off)
+#   FORMAT    — json (default), csv, or md
 
 VERBOSE="${VERBOSE:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 EXECUTE="${EXECUTE:-0}"
+FORMAT="${FORMAT:-json}"
 CX_POSITIONAL_ARGS=()
 ACCESS_TOKEN="${ACCESS_TOKEN:-}"
 
@@ -42,6 +46,18 @@ cx_parse_flags() {
         EXECUTE=1
         DRY_RUN=0
         shift
+        ;;
+      --format)
+        if [ -z "${2:-}" ]; then
+          echo "ERROR: --format requires a value (json, csv, or md)" >&2
+          return 1
+        fi
+        FORMAT="$2"
+        case "${FORMAT}" in
+          json|csv|md) ;;
+          *) echo "ERROR: --format must be json, csv, or md (got: ${FORMAT})" >&2; return 1 ;;
+        esac
+        shift 2
         ;;
       --)
         shift
@@ -272,4 +288,96 @@ cx_paginate() {
   done
 
   echo "${all_items}"
+}
+
+# ---------------------------------------------------------------------------
+# cx_format_csv FIELD1 FIELD2 ...
+# Reads a JSON array from stdin and outputs RFC 4180 CSV to stdout.
+# Fields are jq expressions evaluated against each array element.
+# The field names (with dots/brackets stripped) become the CSV header.
+#
+# Example:
+#   echo '[{"name":"a","id":1}]' | cx_format_csv .name .id
+#   → "name","id"
+#     "a",1
+# ---------------------------------------------------------------------------
+cx_format_csv() {
+  local fields=("$@")
+  if [ ${#fields[@]} -eq 0 ]; then
+    echo "ERROR: cx_format_csv requires at least one field" >&2
+    return 1
+  fi
+
+  # Build jq expression for header and rows
+  local header_parts=()
+  local row_parts=()
+  for f in "${fields[@]}"; do
+    # Strip leading dot and brackets for header name
+    local name="${f#.}"
+    name="${name//[\[\]]/}"
+    header_parts+=("\"${name}\"")
+    row_parts+=("${f}")
+  done
+
+  local header
+  header=$(IFS=','; echo "${header_parts[*]}")
+
+  # Build jq row expression: [.field1, .field2, ...] | @csv
+  local jq_fields
+  jq_fields=$(IFS=','; echo "${row_parts[*]}")
+
+  # Capture stdin first to avoid split-read issues
+  local json
+  json=$(cat)
+
+  echo "${header}"
+  echo "${json}" | jq -r ".[] | [${jq_fields}] | @csv"
+}
+
+# ---------------------------------------------------------------------------
+# cx_format_table FIELD1 FIELD2 ...
+# Reads a JSON array from stdin and outputs a markdown table to stdout.
+# Fields are jq expressions evaluated against each array element.
+#
+# Example:
+#   echo '[{"name":"a","id":1}]' | cx_format_table .name .id
+#   → | name | id |
+#     |------|-----|
+#     | a    | 1   |
+# ---------------------------------------------------------------------------
+cx_format_table() {
+  local fields=("$@")
+  if [ ${#fields[@]} -eq 0 ]; then
+    echo "ERROR: cx_format_table requires at least one field" >&2
+    return 1
+  fi
+
+  # Build header names
+  local header_names=()
+  for f in "${fields[@]}"; do
+    local name="${f#.}"
+    name="${name//[\[\]]/}"
+    header_names+=("${name}")
+  done
+
+  # Build jq row expression
+  local jq_fields
+  jq_fields=$(IFS=','; echo "${fields[*]}")
+
+  # Use jq to produce the full table
+  local json
+  json=$(cat)
+
+  # Header row
+  local header="| "
+  local separator="| "
+  for name in "${header_names[@]}"; do
+    header="${header}${name} | "
+    separator="${separator}--- | "
+  done
+  echo "${header}"
+  echo "${separator}"
+
+  # Data rows
+  echo "${json}" | jq -r ".[] | [${jq_fields}] | \"| \" + (map(if . == null then \"\" else tostring end) | join(\" | \")) + \" |\""
 }

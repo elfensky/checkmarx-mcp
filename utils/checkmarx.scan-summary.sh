@@ -13,15 +13,18 @@
 # API Reference:
 #   Endpoint:   GET {BASE_URI}/api/scan-summary
 #   Auth:       Bearer token (obtained via cx_authenticate)
-#   Params:     scan-ids (required, repeatable), include-severity-status
+#   Params:     scan-ids (required, repeatable), include-severity-status,
+#               include-queries, include-files
 #   See also:   docs/rest-api-reference.md § 11 (Results Summary API)
 #
 # Usage:
-#   ./utils/checkmarx.scan-summary.sh [-v|--verbose] --scan-id ID [--scan-id ID2 ...]
+#   ./utils/checkmarx.scan-summary.sh [-v|--verbose] --scan-id ID [--scan-id ID2 ...] [--include-queries] [--include-files]
 #
 # Options:
-#   -v, --verbose   Print curl commands and derived URLs to stderr
-#   --scan-id ID    Scan UUID to include in the summary (repeatable)
+#   -v, --verbose       Print curl commands and derived URLs to stderr
+#   --scan-id ID        Scan UUID to include in the summary (repeatable)
+#   --include-queries   Include per-query breakdown in the response
+#   --include-files     Include per-file breakdown in the response
 #
 # Output:
 #   The full scan-summary JSON to stdout. Key structure:
@@ -38,6 +41,7 @@
 #
 # Examples:
 #   ./utils/checkmarx.scan-summary.sh --scan-id "uuid"
+#   ./utils/checkmarx.scan-summary.sh --scan-id "uuid" --include-queries
 #   ./utils/checkmarx.scan-summary.sh --scan-id "uuid" | jq '.scansSummaries[0].sastCounters'
 #   ./utils/checkmarx.scan-summary.sh --scan-id "id1" --scan-id "id2"
 #
@@ -59,15 +63,19 @@ set -- "${CX_POSITIONAL_ARGS[@]+"${CX_POSITIONAL_ARGS[@]}"}"
 
 # --- Parse scan IDs (repeatable flag) ---
 SCAN_IDS=()
+INCLUDE_QUERIES=0
+INCLUDE_FILES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --scan-id) SCAN_IDS+=("$2"); shift 2 ;;
-    *)         echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
+    --scan-id)          SCAN_IDS+=("$2"); shift 2 ;;
+    --include-queries)  INCLUDE_QUERIES=1; shift ;;
+    --include-files)    INCLUDE_FILES=1; shift ;;
+    *)                  echo "ERROR: Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ ${#SCAN_IDS[@]} -eq 0 ]; then
-  echo "Usage: $0 [-v|--verbose] --scan-id ID [--scan-id ID2 ...]" >&2
+  echo "Usage: $0 [-v|--verbose] --scan-id ID [--scan-id ID2 ...] [--include-queries] [--include-files]" >&2
   exit 1
 fi
 
@@ -83,5 +91,10 @@ for sid in "${SCAN_IDS[@]}"; do
   QUERY="${QUERY}scan-ids=${sid}"
 done
 
+# --- Add optional params ---
+QUERY="${QUERY}&include-severity-status=true"
+[ "${INCLUDE_QUERIES}" -eq 1 ] && QUERY="${QUERY}&include-queries=true"
+[ "${INCLUDE_FILES}" -eq 1 ]   && QUERY="${QUERY}&include-files=true"
+
 # --- Fetch and output ---
-cx_get "${BASE}/api/scan-summary?${QUERY}&include-severity-status=true"
+cx_get "${BASE}/api/scan-summary?${QUERY}"

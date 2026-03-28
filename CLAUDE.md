@@ -18,10 +18,15 @@ Shell scripts that interact with the Checkmarx One REST API to generate reports 
 ├── utils/                          # Composable utility scripts (JSON to stdout)
 │   ├── checkmarx.list-projects.sh
 │   ├── checkmarx.get-project.sh
+│   ├── checkmarx.list-projects-last-scan.sh  # Project inventory with last scan info
 │   ├── checkmarx.list-scans.sh
 │   ├── checkmarx.get-scan.sh
 │   ├── checkmarx.scan-summary.sh
 │   ├── checkmarx.list-results.sh
+│   ├── checkmarx.list-sast-results.sh        # SAST-specific results with rich filters
+│   ├── checkmarx.sast-aggregate.sh           # SAST counts by category
+│   ├── checkmarx.sast-compare.sh             # Compare two scans (new/fixed/recurrent)
+│   ├── checkmarx.get-sast-predicates.sh      # Triage history for findings
 │   ├── checkmarx.list-applications.sh
 │   ├── checkmarx.list-groups.sh
 │   ├── checkmarx.list-presets.sh
@@ -66,7 +71,20 @@ Composable, single-purpose scripts that output clean JSON to stdout. All support
 
 # Results & summaries
 ./utils/checkmarx.scan-summary.sh --scan-id "uuid"                      # severity counts
+./utils/checkmarx.scan-summary.sh --scan-id "uuid" --include-queries    # per-query breakdown
 ./utils/checkmarx.list-results.sh --scan-id "uuid" --severity "HIGH,CRITICAL"  # vulns
+./utils/checkmarx.list-results.sh --scan-id "uuid" --status "NEW"       # new findings only
+
+# SAST-specific analysis
+./utils/checkmarx.list-sast-results.sh --scan-id "uuid" --language "JavaScript" --query "SQL_Injection"
+./utils/checkmarx.sast-aggregate.sh --scan-id "uuid" --group-by SEVERITY            # severity distribution
+./utils/checkmarx.sast-aggregate.sh --scan-id "uuid" --group-by QUERY --limit 10    # top 10 query types
+./utils/checkmarx.sast-compare.sh --scan-id "new" --base-scan-id "old" --group-by QUERY  # scan diff
+./utils/checkmarx.get-sast-predicates.sh --similarity-id "12345"        # triage history
+
+# Project inventory
+./utils/checkmarx.list-projects-last-scan.sh                            # all projects with last scan
+./utils/checkmarx.list-projects-last-scan.sh --application-id "uuid"    # filter by app
 
 # Applications, groups, presets
 ./utils/checkmarx.list-applications.sh                      # all apps
@@ -91,6 +109,20 @@ SID=$(./utils/checkmarx.list-scans.sh --project-id "$PID" --statuses Completed -
 
 # Download PDF report for latest scan
 ./utils/checkmarx.get-report.sh --scan-id "$SID" --project-id "$PID"
+
+# Compare last two scans for a project (what changed?)
+SCANS=$(./utils/checkmarx.list-scans.sh --project-id "$PID" --statuses Completed --limit 2)
+NEW_SID=$(echo "$SCANS" | jq -r '.[0].id')
+OLD_SID=$(echo "$SCANS" | jq -r '.[1].id')
+./utils/checkmarx.sast-compare.sh --scan-id "$NEW_SID" --base-scan-id "$OLD_SID" --group-by QUERY
+
+# SAST severity distribution as CSV
+./utils/checkmarx.sast-aggregate.sh --scan-id "$SID" --group-by SEVERITY \
+  | cx_format_csv .severity .count
+
+# Project inventory as markdown table
+./utils/checkmarx.list-projects-last-scan.sh --application-id "$APP_ID" \
+  | cx_format_table .name .lastScanDate .status
 ```
 
 Token caching means only the first script in a pipeline authenticates; subsequent scripts reuse the cached token from `$TMPDIR`.
@@ -122,7 +154,7 @@ Two auth methods exist as separate scripts because they use different OAuth2 gra
 All scripts source `lib.sh` from the repo root for shared functionality:
 
 ### Core (used by all scripts)
-- **Flag parsing:** `cx_parse_flags "$@"` — handles `--verbose`/`-v`, `--dry-run`, `--execute`/`--confirm`
+- **Flag parsing:** `cx_parse_flags "$@"` — handles `--verbose`/`-v`, `--dry-run`, `--execute`/`--confirm`, `--format csv|json|md`
 - **Logging:** `cx_log "msg"` (always), `cx_vlog "msg"` (verbose only)
 - **Curl wrapper:** `cx_curl ...` — prints the full curl command in verbose mode with secrets redacted
 
@@ -133,6 +165,8 @@ All scripts source `lib.sh` from the repo root for shared functionality:
 - **`cx_require_vars VAR1 VAR2...`** — Validates that listed environment variables are set and non-empty.
 - **`cx_base_urls`** — Derives `BASE` and `IAM_URL` from `BASE_URI` and `TENANT`.
 - **`cx_urlencode STRING`** — Portable percent-encoding via `jq`.
+- **`cx_format_csv FIELD1 FIELD2...`** — Reads JSON array from stdin, outputs RFC 4180 CSV. Fields are jq expressions (e.g., `.name`, `.severity`).
+- **`cx_format_table FIELD1 FIELD2...`** — Reads JSON array from stdin, outputs a markdown table. Same field syntax.
 
 After calling `cx_parse_flags`, restore positional args with:
 ```bash

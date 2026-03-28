@@ -54,10 +54,15 @@ See [CLAUDE.md](CLAUDE.md) for full CLI documentation.
 |------|-------------|
 | `list_projects` | List/search projects in the tenant |
 | `get_project` | Get a project by UUID or exact name |
+| `list_projects_last_scan` | Project inventory with last scan status per engine |
 | `list_scans` | List scans with project/status filters |
 | `get_scan` | Get a single scan by ID |
-| `scan_summary` | Severity/status counts for scan(s) |
-| `list_results` | List vulnerability findings |
+| `scan_summary` | Severity/status counts for scan(s), with optional per-query/file breakdown |
+| `list_results` | List vulnerability findings (supports NEW/RECURRENT/FIXED status filter) |
+| `list_sast_results` | SAST-specific results with rich filters (query, language, CWE, source/sink, compliance) |
+| `sast_aggregate` | SAST counts grouped by query, severity, status, language, or file |
+| `sast_compare` | Compare two scans — new, fixed, and recurrent findings |
+| `get_sast_predicates` | Triage history for a finding (state, severity overrides, comments) |
 | `list_applications` | List application groupings |
 | `list_groups` | List access management groups |
 | `list_presets` | List SAST query presets |
