@@ -197,11 +197,14 @@ cx_authenticate() {
 
   local expires_in
   expires_in=$(echo "${token_response}" | jq -r '.expires_in // 1800')
-  local expires_at=$(( now + expires_in - 60 ))  # 60s safety buffer
+  local expires_at
+  expires_at=$(( now + expires_in - 60 ))  # 60s safety buffer
 
-  # Write cache file with restricted permissions
+  # Write cache file atomically with restricted permissions
+  local tmp_file
+  tmp_file=$(mktemp "${token_file}.XXXXXX")
   (umask 077; jq -n --arg t "${ACCESS_TOKEN}" --argjson e "${expires_at}" \
-    '{"access_token": $t, "expires_at": $e}' > "${token_file}")
+    '{"access_token": $t, "expires_at": $e}' > "${tmp_file}" && mv "${tmp_file}" "${token_file}")
 
   cx_log "Token obtained (expires in ${expires_in}s, cached)"
 }
@@ -252,12 +255,16 @@ cx_paginate() {
     all_items=$(echo "${all_items}" "${page_items}" | jq -s '.[0] + .[1]')
 
     local total
-    total=$(echo "${response}" | jq '.filteredTotalCount // .totalCount // 0')
+    total=$(echo "${response}" | jq '.filteredTotalCount // .totalCount // empty')
 
     offset=$((offset + limit))
     page=$((page + 1))
 
-    if [ "${page_size}" -eq 0 ] || [ "${offset}" -ge "${total}" ]; then
+    # Stop when: empty page, or we've fetched past the reported total
+    if [ "${page_size}" -eq 0 ]; then
+      break
+    fi
+    if [ -n "${total}" ] && [ "${offset}" -ge "${total}" ]; then
       break
     fi
 
