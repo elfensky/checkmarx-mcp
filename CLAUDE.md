@@ -6,7 +6,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Shell scripts that interact with the Checkmarx One REST API to generate reports and perform administrative tasks. Each script is a standalone bash tool — there is no build system, package manager, or test framework.
 
+## Repository Layout
+
+```
+.
+├── lib.sh                          # Shared library (auth, HTTP, pagination, logging)
+├── .env                            # Credentials and tenant config (not committed)
+├── checkmarx.api.sh                # Demo: API Key auth flow → list projects
+├── checkmarx.oauth.sh              # Demo: OAuth2 client credentials → list projects
+├── checkmarx.report.sh             # CSV report: projects by application
+├── utils/                          # Composable utility scripts (JSON to stdout)
+│   ├── checkmarx.list-projects.sh
+│   ├── checkmarx.get-project.sh
+│   ├── checkmarx.list-scans.sh
+│   ├── checkmarx.get-scan.sh
+│   ├── checkmarx.scan-summary.sh
+│   ├── checkmarx.list-results.sh
+│   ├── checkmarx.list-applications.sh
+│   ├── checkmarx.list-groups.sh
+│   ├── checkmarx.list-presets.sh
+│   └── checkmarx.get-report.sh
+└── docs/                           # API and CLI reference documentation
+```
+
 ## Running Scripts
+
+### Top-level scripts (standalone demos)
 
 ```bash
 # API Key authentication flow (uses APIKEY from .env)
@@ -20,9 +45,55 @@ Shell scripts that interact with the Checkmarx One REST API to generate reports 
 ./checkmarx.report.sh              # defaults to "OneApp"
 ./checkmarx.report.sh "MyApp"      # custom application name
 ./checkmarx.report.sh -v "MyApp"   # verbose mode
-
-# All read-only scripts support -v / --verbose
 ```
+
+### Utility scripts (`utils/`)
+
+Composable, single-purpose scripts that output clean JSON to stdout. All support `-v`/`--verbose`. They use `lib.sh` shared functions for authentication (with token caching), pagination, and HTTP.
+
+```bash
+# Projects
+./utils/checkmarx.list-projects.sh                          # all projects
+./utils/checkmarx.list-projects.sh --name "my-project"      # filter by name
+./utils/checkmarx.list-projects.sh --limit 10               # first 10 only
+./utils/checkmarx.get-project.sh "my-project"               # by name (exact match)
+./utils/checkmarx.get-project.sh "a1b2c3d4-..."             # by UUID
+
+# Scans
+./utils/checkmarx.list-scans.sh --project-id "uuid"                     # all scans
+./utils/checkmarx.list-scans.sh --project-id "uuid" --statuses Completed --limit 1  # latest
+./utils/checkmarx.get-scan.sh "scan-uuid"                               # single scan
+
+# Results & summaries
+./utils/checkmarx.scan-summary.sh --scan-id "uuid"                      # severity counts
+./utils/checkmarx.list-results.sh --scan-id "uuid" --severity "HIGH,CRITICAL"  # vulns
+
+# Applications, groups, presets
+./utils/checkmarx.list-applications.sh                      # all apps
+./utils/checkmarx.list-groups.sh --search "security"        # search groups
+./utils/checkmarx.list-presets.sh                           # SAST presets
+
+# Reports (create + poll + download)
+./utils/checkmarx.get-report.sh --scan-id "uuid" --project-id "uuid" --format pdf
+```
+
+#### Composability (piping scripts together)
+
+Utility scripts output JSON to stdout and log to stderr, so they compose with `jq`:
+
+```bash
+# Get severity counts for latest scan of a project
+PID=$(./utils/checkmarx.get-project.sh "my-project" | jq -r '.id')
+SID=$(./utils/checkmarx.list-scans.sh --project-id "$PID" --statuses Completed --limit 1 \
+  | jq -r '.[0].id')
+./utils/checkmarx.scan-summary.sh --scan-id "$SID" \
+  | jq '.scansSummaries[0].sastCounters.severityCounters'
+
+# Download PDF report for latest scan
+./utils/checkmarx.get-report.sh --scan-id "$SID" --project-id "$PID"
+```
+
+Token caching means only the first script in a pipeline authenticates; subsequent scripts reuse the cached token from `$TMPDIR`.
 
 Prerequisites: `curl`, `jq`, and a configured `.env` file.
 
@@ -49,14 +120,28 @@ Two auth methods exist as separate scripts because they use different OAuth2 gra
 ## Shared Library (`lib.sh`)
 
 All scripts source `lib.sh` from the repo root for shared functionality:
+
+### Core (used by all scripts)
 - **Flag parsing:** `cx_parse_flags "$@"` — handles `--verbose`/`-v`, `--dry-run`, `--execute`/`--confirm`
 - **Logging:** `cx_log "msg"` (always), `cx_vlog "msg"` (verbose only)
 - **Curl wrapper:** `cx_curl ...` — prints the full curl command in verbose mode with secrets redacted
+
+### Extended (used by `utils/` scripts)
+- **`cx_authenticate`** — Obtains a JWT access token, auto-detecting the auth flow (API key vs OAuth2). Caches the token in `$TMPDIR/cx-token-<TENANT>.json` with a 60-second expiry buffer. Reuses cached tokens across script invocations.
+- **`cx_get URL`** — Authenticated GET request with standard `Accept: application/json; version=1.0` header.
+- **`cx_paginate URL ARRAY_KEY [LIMIT]`** — Fetches all pages from a list endpoint and outputs a merged JSON array. Handles `filteredTotalCount`/`totalCount` and has a 100-page safety cap.
+- **`cx_require_vars VAR1 VAR2...`** — Validates that listed environment variables are set and non-empty.
+- **`cx_base_urls`** — Derives `BASE` and `IAM_URL` from `BASE_URI` and `TENANT`.
+- **`cx_urlencode STRING`** — Portable percent-encoding via `jq`.
 
 After calling `cx_parse_flags`, restore positional args with:
 ```bash
 set -- "${CX_POSITIONAL_ARGS[@]+"${CX_POSITIONAL_ARGS[@]}"}"
 ```
+
+### Token caching
+
+`cx_authenticate` caches tokens in `$TMPDIR/cx-token-<TENANT>.json` (per-user, restricted permissions via `umask 077`, atomic writes via `mktemp`+`mv`). This means running multiple utility scripts in sequence or a pipeline makes only one auth round-trip. The cache is invalidated 60 seconds before the token actually expires.
 
 ## Safe Execution Conventions
 
@@ -64,11 +149,12 @@ Scripts are classified by whether they mutate data on Checkmarx:
 
 ### Read-only scripts (GET only)
 
-Support `--verbose` / `-v` to print curl commands and derived URLs before executing them. No dry-run flag — reads are inherently safe.
+All utility scripts in `utils/` and the top-level demo scripts are read-only. They support `--verbose` / `-v` to print curl commands and derived URLs before executing them. No dry-run flag — reads are inherently safe.
 
 ```bash
 ./checkmarx.api.sh --verbose
 ./checkmarx.report.sh -v "MyApp"
+./utils/checkmarx.list-projects.sh -v
 ```
 
 ### Write scripts (POST/PUT/DELETE that mutate data)
@@ -100,13 +186,27 @@ fi
 
 ## Adding New Scripts
 
-When adding a new script, follow the existing conventions:
+### Top-level scripts
+
+When adding a new top-level script, follow the existing conventions:
 - `set -euo pipefail` at the top
 - Source `lib.sh`, call `cx_parse_flags "$@"`, then source `.env`
 - Validate required env vars before use
 - Derive API URLs from `BASE_URI` (don't hardcode regions)
 - Use `cx_curl` (not bare `curl`) for all HTTP requests
 - Classify as read-only or write and follow the safe execution pattern above
+
+### Utility scripts (`utils/`)
+
+When adding a new utility script in `utils/`:
+- Use the naming convention `checkmarx.<verb>-<resource>.sh`
+- Source lib.sh with the relative path: `source "${SCRIPT_DIR}/../lib.sh"`
+- Source .env with the relative path: `source "${SCRIPT_DIR}/../.env"`
+- Use `cx_authenticate` instead of inline auth (enables token caching)
+- Use `cx_get` for authenticated GET requests
+- Use `cx_paginate` for list endpoints with pagination
+- Output clean JSON to stdout; log to stderr via `cx_log`/`cx_vlog`
+- Add extensive header comments: description, API reference, usage, options, output format, examples, composability hints, and exit codes
 
 ## Documentation (`docs/`)
 
