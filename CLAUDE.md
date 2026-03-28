@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-Shell scripts that interact with the Checkmarx One REST API to generate reports and perform administrative tasks. Each script is a standalone bash tool — there is no build system, package manager, or test framework.
+Two interfaces for pulling data from the Checkmarx One REST API:
+
+1. **MCP server** (TypeScript) — 15 tools that Claude calls directly for conversational, ad-hoc queries. Returns JSON; Claude formats the output for the audience.
+2. **CLI scripts** (Bash) — 15 composable utilities that output JSON to stdout. Pipe with `jq` or use built-in `cx_format_csv`/`cx_format_table` formatters. For repeatable reports, cron jobs, and scripted pipelines.
+
+Both share the same API surface and authentication layer (token caching across invocations). The repo also includes standalone demo scripts for auth flows and a CSV report generator.
 
 ## Repository Layout
 
@@ -141,13 +146,48 @@ The `BASE_URI` uses `ast.checkmarx.net`; the scripts automatically derive the IA
 
 ## Architecture
 
-Scripts follow a two-step pattern:
+### Common pattern
+
+All tools (both MCP and CLI) follow a two-step pattern:
 1. **Authenticate** — POST to Checkmarx IAM to get a JWT access token (30-min validity)
 2. **Call API** — Use the bearer token against `{BASE_URI}/api/...` endpoints
 
-Two auth methods exist as separate scripts because they use different OAuth2 grant types:
-- `checkmarx.api.sh` — `grant_type=refresh_token` with a long-lived API key
-- `checkmarx.oauth.sh` — `grant_type=client_credentials` with client ID/secret
+Two auth methods exist because they use different OAuth2 grant types:
+- `grant_type=refresh_token` — with a long-lived API key (simpler, per-user)
+- `grant_type=client_credentials` — with client ID/secret (for service accounts)
+
+### MCP server (`mcp-server/`)
+
+The MCP server is a TypeScript process (`@modelcontextprotocol/sdk`) that communicates over stdio. It exposes 15 tools organized into five categories: projects/inventory, scans, results/findings, SAST analysis, and organization/reports.
+
+- `mcp-server/src/index.ts` — Tool registrations (Zod schemas, descriptions, handler wiring)
+- `mcp-server/src/client.ts` — `CheckmarxClient` class: auth, HTTP helpers, pagination, and all API methods
+
+The client uses in-memory token caching (60s safety buffer). Configuration errors are deferred to tool invocation time so the server starts cleanly and reports errors through tool responses.
+
+### CLI scripts (`utils/`)
+
+Each script is a standalone executable that sources `lib.sh` for shared functions. Scripts output JSON to stdout and log to stderr, making them composable via pipes:
+
+```
+get-project → list-scans → scan-summary → cx_format_csv → file.csv
+```
+
+Token caching via `$TMPDIR` means only the first script in a pipeline authenticates.
+
+### API coverage
+
+The tools cover five Checkmarx One API areas:
+
+| API | Endpoints wrapped | Scripts/Tools |
+|-----|-------------------|---------------|
+| Projects | `/api/projects`, `/api/projects/last-scan` | `list_projects`, `get_project`, `list_projects_last_scan` |
+| Scans | `/api/scans`, `/api/scan-summary` | `list_scans`, `get_scan`, `scan_summary` |
+| Results | `/api/results`, `/api/sast-results` | `list_results`, `list_sast_results` |
+| SAST Analysis | `/api/sast-scan-summary/aggregate`, `/compare/aggregate`, `/api/sast-results-predicates` | `sast_aggregate`, `sast_compare`, `get_sast_predicates` |
+| Organization | `/api/applications`, `/api/access-management/groups`, `/api/queries/presets`, `/api/reports` | `list_applications`, `list_groups`, `list_presets`, `get_report` |
+
+All operations are **read-only** (GET requests only). No write/mutate operations are exposed.
 
 ## Shared Library (`lib.sh`)
 

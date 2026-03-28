@@ -6,11 +6,28 @@
  * Exposes the Checkmarx One REST API as MCP tools for use with
  * Claude Code, Claude Desktop, or any MCP client.
  *
+ * 15 read-only tools organized into five categories:
+ *
+ *   Projects & Inventory (3):
+ *     list_projects, get_project, list_projects_last_scan
+ *
+ *   Scans (3):
+ *     list_scans, get_scan, scan_summary
+ *
+ *   Results & Findings (2):
+ *     list_results, list_sast_results
+ *
+ *   SAST Analysis (3):
+ *     sast_aggregate, sast_compare, get_sast_predicates
+ *
+ *   Organization & Reports (4):
+ *     list_applications, list_groups, list_presets, get_report
+ *
  * Configuration via environment variables:
- *   CHECKMARX_TENANT     - Tenant name (required)
- *   CHECKMARX_BASE_URI   - API base URL (required, e.g., https://ast.checkmarx.net)
- *   CHECKMARX_API_KEY    - API key (refresh_token flow)
- *   CHECKMARX_CLIENT_ID  - OAuth2 client ID (client_credentials flow)
+ *   CHECKMARX_TENANT       - Tenant name (required)
+ *   CHECKMARX_BASE_URI     - API base URL (required, e.g., https://ast.checkmarx.net)
+ *   CHECKMARX_API_KEY      - API key (refresh_token flow)
+ *   CHECKMARX_CLIENT_ID    - OAuth2 client ID (client_credentials flow)
  *   CHECKMARX_CLIENT_SECRET - OAuth2 client secret
  *
  * If both CLIENT_ID+CLIENT_SECRET and API_KEY are set, client_credentials takes priority.

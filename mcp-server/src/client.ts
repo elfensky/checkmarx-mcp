@@ -3,8 +3,22 @@
  *
  * Handles authentication (API key or OAuth2 client credentials),
  * in-memory token caching, pagination, and authenticated HTTP requests.
+ * This is a TypeScript port of the patterns in lib.sh.
  *
- * This is a TypeScript port of the patterns in lib.sh from checkmarx-cli.
+ * API methods are organized to match the utils/ bash scripts:
+ *
+ *   Projects:   listProjects, getProject, listProjectsLastScan
+ *   Scans:      listScans, getScan, scanSummary
+ *   Results:    listResults, listSastResults
+ *   SAST:       sastAggregate, sastCompare, getSastPredicates
+ *   Org:        listApplications, listGroups, listPresets
+ *   Reports:    getReport
+ *
+ * All methods are read-only (GET requests), except getReport which
+ * uses POST to create a report request and then polls with GET.
+ *
+ * @see lib.sh for the bash equivalent
+ * @see docs/rest-api-reference.md for full API documentation
  */
 
 // ---------------------------------------------------------------------------
@@ -234,7 +248,7 @@ export class CheckmarxClient {
   }
 
   // -------------------------------------------------------------------------
-  // API methods (matching utils/ scripts)
+  // API methods — Projects & Inventory
   // -------------------------------------------------------------------------
 
   /** List projects, optionally filtered by name. */
@@ -278,6 +292,10 @@ export class CheckmarxClient {
     return match;
   }
 
+  // -------------------------------------------------------------------------
+  // API methods — Scans
+  // -------------------------------------------------------------------------
+
   /** List scans with optional filters. */
   async listScans(params?: {
     projectId?: string;
@@ -305,7 +323,18 @@ export class CheckmarxClient {
     return this.get(`/api/scans/${scanId}`);
   }
 
-  /** Get scan results summary for one or more scans. */
+  /**
+   * Get scan results summary for one or more scans.
+   *
+   * Returns aggregated vulnerability counts broken down by scanner type
+   * (SAST, SCA, KICS, API Security), severity, status, and state. Much
+   * faster than fetching individual results when you only need counts.
+   *
+   * @param scanIds - Array of scan UUIDs to summarize
+   * @param options.includeQueries - Include per-query breakdown (query name + count)
+   * @param options.includeFiles - Include per-file breakdown (file path + count)
+   * @see docs/rest-api-reference.md § 11 (Results Summary API)
+   */
   async scanSummary(
     scanIds: string[],
     options?: { includeQueries?: boolean; includeFiles?: boolean }
@@ -317,7 +346,24 @@ export class CheckmarxClient {
     return this.get(`/api/scan-summary?${qs}`);
   }
 
-  /** List vulnerability results for a scan. */
+  // -------------------------------------------------------------------------
+  // API methods — Results & Findings
+  // -------------------------------------------------------------------------
+
+  /**
+   * List vulnerability results for a scan.
+   *
+   * Returns unified findings from all scanner engines (SAST, SCA, KICS,
+   * API Security). Each result includes type, severity, status, state,
+   * description, and scanner-specific data.
+   *
+   * @param params.scanId - Scan UUID to fetch results for
+   * @param params.severity - Comma-separated: CRITICAL, HIGH, MEDIUM, LOW, INFO
+   * @param params.state - Comma-separated triage state: TO_VERIFY, NOT_EXPLOITABLE, CONFIRMED, URGENT
+   * @param params.status - Comma-separated finding lifecycle: NEW, RECURRENT, FIXED
+   * @param params.limit - Max results (omit to auto-paginate all)
+   * @see docs/rest-api-reference.md § 6 (Results API)
+   */
   async listResults(params: {
     scanId: string;
     severity?: string;
@@ -342,7 +388,25 @@ export class CheckmarxClient {
     return this.paginate(path, "results");
   }
 
-  /** List projects with their last scan information. */
+  /**
+   * List projects with their last scan information in a single API call.
+   *
+   * Wraps GET /api/projects/last-scan which returns project details plus
+   * the latest scan metadata (status, engines, dates, per-engine status).
+   * Far more efficient than fetching scans per-project — replaces the N+1
+   * pattern used by checkmarx.report.sh.
+   *
+   * @param params.applicationId - Filter to projects in this application
+   * @param params.scanStatus - Filter by overall scan status (e.g., "Completed")
+   * @param params.sastStatus - Filter by SAST engine status
+   * @param params.scaStatus - Filter by SCA engine status
+   * @param params.kicsStatus - Filter by KICS engine status
+   * @param params.apisecStatus - Filter by API Security engine status
+   * @param params.branch - Filter by branch name
+   * @param params.useMainBranch - Only include scans from the project's main branch
+   * @param params.limit - Max results to return
+   * @see docs/rest-api-reference.md § 13.8
+   */
   async listProjectsLastScan(params?: {
     applicationId?: string;
     scanStatus?: string;
@@ -382,7 +446,26 @@ export class CheckmarxClient {
     return data;
   }
 
-  /** Get aggregated SAST results grouped by category. */
+  // -------------------------------------------------------------------------
+  // API methods — SAST Analysis
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get aggregated SAST finding counts grouped by category.
+   *
+   * Wraps GET /api/sast-scan-summary/aggregate. Returns SAST counts
+   * grouped by one or more fields: QUERY, SEVERITY, STATUS, SOURCE_FILE,
+   * SINK_FILE, SOURCE_NODE, SINK_NODE, or LANGUAGE. Use this for
+   * vulnerability distribution reports and top-N query type lists.
+   *
+   * @param params.scanId - Scan UUID to aggregate
+   * @param params.groupByFields - One or more grouping fields
+   * @param params.severity - Comma-separated severity filter (HIGH, MEDIUM, LOW, INFO)
+   * @param params.status - Comma-separated status filter (NEW, RECURRENT)
+   * @param params.language - Comma-separated language filter
+   * @param params.limit - Max results per page (API default: 20)
+   * @see docs/rest-api-reference.md § 8.1
+   */
   async sastAggregate(params: {
     scanId: string;
     groupByFields: string[];
@@ -404,7 +487,23 @@ export class CheckmarxClient {
     return this.get(`/api/sast-scan-summary/aggregate?${query.toString()}`);
   }
 
-  /** Compare SAST results between two scans. */
+  /**
+   * Compare SAST results between two scans.
+   *
+   * Wraps GET /api/sast-scan-summary/compare/aggregate. Shows the diff
+   * between two scans: NEW findings (appeared in newer scan), RECURRENT
+   * findings (present in both), and FIXED findings (resolved). Results
+   * are grouped by LANGUAGE or QUERY.
+   *
+   * @param params.scanId - UUID of the newer scan
+   * @param params.baseScanId - UUID of the older scan to compare against
+   * @param params.groupByFields - Grouping: LANGUAGE and/or QUERY
+   * @param params.severity - Comma-separated severity filter
+   * @param params.status - Comma-separated status filter (NEW, RECURRENT, FIXED)
+   * @param params.language - Comma-separated language filter
+   * @param params.limit - Max results per page (API default: 20)
+   * @see docs/rest-api-reference.md § 8.2
+   */
   async sastCompare(params: {
     scanId: string;
     baseScanId: string;
@@ -430,6 +529,10 @@ export class CheckmarxClient {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // API methods — Organization
+  // -------------------------------------------------------------------------
+
   /** List applications, optionally filtered by name. */
   async listApplications(params?: { name?: string }) {
     const path = params?.name
@@ -454,7 +557,23 @@ export class CheckmarxClient {
     return data;
   }
 
-  /** Get latest triage predicates for a SAST finding. */
+  // -------------------------------------------------------------------------
+  // API methods — SAST Triage & Detailed Results
+  // -------------------------------------------------------------------------
+
+  /**
+   * Get the latest triage predicates for a SAST finding.
+   *
+   * Wraps GET /api/sast-results-predicates/{similarity_id}/latest.
+   * Returns the current triage state for a finding: severity overrides,
+   * state changes (TO_VERIFY → CONFIRMED, etc.), and analyst comments.
+   * Use this for compliance reporting and understanding triage decisions.
+   *
+   * @param params.similarityId - Similarity ID of the SAST finding (from result objects)
+   * @param params.projectIds - Comma-separated project UUIDs to scope the query
+   * @param params.scanId - Scope to a specific scan
+   * @see docs/rest-api-reference.md § 9.2
+   */
   async getSastPredicates(params: {
     similarityId: string;
     projectIds?: string;
@@ -470,7 +589,31 @@ export class CheckmarxClient {
     );
   }
 
-  /** List SAST-specific results with rich filtering. */
+  /**
+   * List SAST-specific results with rich filtering.
+   *
+   * Wraps GET /api/sast-results which provides much richer filtering
+   * than the generic /api/results endpoint: filter by SAST query name,
+   * programming language, CWE ID, source/sink file paths, compliance
+   * framework, and vulnerability category. Also supports including
+   * full source-to-sink node details in each result.
+   *
+   * @param params.scanId - Scan UUID
+   * @param params.severity - Comma-separated: CRITICAL, HIGH, MEDIUM, LOW, INFO
+   * @param params.status - Comma-separated: NEW, RECURRENT
+   * @param params.state - Comma-separated: TO_VERIFY, NOT_EXPLOITABLE, CONFIRMED, etc.
+   * @param params.query - Filter by SAST query name (e.g., "SQL_Injection")
+   * @param params.language - Comma-separated language filter (e.g., "JavaScript,TypeScript")
+   * @param params.cweId - Filter by CWE ID (e.g., "79" for XSS)
+   * @param params.sourceFile - Filter by source file path (substring)
+   * @param params.sinkFile - Filter by sink file path (substring)
+   * @param params.compliance - Filter by compliance framework
+   * @param params.category - Filter by vulnerability category
+   * @param params.applyPredicates - Apply triage predicates to results (default: true)
+   * @param params.includeNodes - Include source-to-sink node details
+   * @param params.limit - Max results (omit to auto-paginate all)
+   * @see docs/rest-api-reference.md § 7 (SAST Results API)
+   */
   async listSastResults(params: {
     scanId: string;
     severity?: string;
@@ -518,6 +661,10 @@ export class CheckmarxClient {
   async listPresets() {
     return this.get("/api/queries/presets");
   }
+
+  // -------------------------------------------------------------------------
+  // API methods — Reports
+  // -------------------------------------------------------------------------
 
   /**
    * Generate and wait for a scan report.
