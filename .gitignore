@@ -1,2 +1,5 @@
 .env
 report_*.csv
+report-*.csv
+report-data/
+*.pdf

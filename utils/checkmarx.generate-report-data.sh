@@ -81,7 +81,7 @@ done
 
 # --- Defaults ---
 if [ -z "${OUTPUT_DIR}" ]; then
-  OUTPUT_DIR="report-data/$(date +%Y-%m-%d)"
+  OUTPUT_DIR="$(cx_output_dir "$(date +%Y-%m-%d)")"
 fi
 
 if [ -z "${ENGINES}" ]; then

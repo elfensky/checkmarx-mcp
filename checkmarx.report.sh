@@ -13,10 +13,25 @@ source "${SCRIPT_DIR}/lib.sh"
 cx_parse_flags "$@"
 set -- "${CX_POSITIONAL_ARGS[@]+"${CX_POSITIONAL_ARGS[@]}"}"
 
+# --- Parse script-specific flags ---
+OUTPUT_DIR=""
+REMAINING_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    *)            REMAINING_ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+
 # --- Configuration ---
 APP_NAME="${1:-OneApp}"
 REPORT_DATE="$(date +%Y-%m-%d)"
-OUTPUT_FILE="report_${APP_NAME}_${REPORT_DATE}.csv"
+if [ -z "${OUTPUT_DIR}" ]; then
+  OUTPUT_DIR="$(cx_output_dir)"
+fi
+mkdir -p "${OUTPUT_DIR}"
+OUTPUT_FILE="${OUTPUT_DIR}/report_${APP_NAME}_${REPORT_DATE}.csv"
 
 # --- Load environment ---
 source "${SCRIPT_DIR}/.env"

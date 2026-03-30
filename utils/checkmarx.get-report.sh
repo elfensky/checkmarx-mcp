@@ -87,7 +87,7 @@ fi
 
 # --- Default output filename (first 8 chars of scan UUID for brevity) ---
 if [ -z "${OUTPUT}" ]; then
-  OUTPUT="report-${SCAN_ID:0:8}.${FORMAT}"
+  OUTPUT="$(cx_output_dir)/report-${SCAN_ID:0:8}.${FORMAT}"
 fi
 
 # --- Load credentials and authenticate ---
