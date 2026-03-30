@@ -224,6 +224,7 @@ All scripts source `lib.sh` from the repo root for shared functionality:
 - **`cx_paginate URL ARRAY_KEY [LIMIT]`** — Fetches all pages from a list endpoint and outputs a merged JSON array. Handles `filteredTotalCount`/`totalCount` and has a 100-page safety cap.
 - **`cx_require_vars VAR1 VAR2...`** — Validates that listed environment variables are set and non-empty.
 - **`cx_base_urls`** — Derives `BASE` and `IAM_URL` from `BASE_URI` and `TENANT`.
+- **`cx_output_dir [SUBDIR]`** — Returns a report output directory outside the repo (`~/Downloads/checkmarx-reports/` or `~/checkmarx-reports/`). Creates it if needed. Used as the default by all report-writing scripts.
 - **`cx_urlencode STRING`** — Portable percent-encoding via `jq`.
 - **`cx_format_csv FIELD1 FIELD2...`** — Reads JSON array from stdin, outputs RFC 4180 CSV. Fields are jq expressions (e.g., `.name`, `.severity`).
 - **`cx_format_table FIELD1 FIELD2...`** — Reads JSON array from stdin, outputs a markdown table. Same field syntax.
@@ -277,6 +278,32 @@ else
   cx_curl --silent --fail --request DELETE "${API_URL}/projects/${PROJECT_ID}" ...
 fi
 ```
+
+## Report Output
+
+**Reports must never be saved inside any repository.** Scripts that write files to disk default to a user-local directory:
+
+1. `~/Downloads/checkmarx-reports/` — if `~/Downloads` exists (macOS, Windows Git Bash, desktop Linux)
+2. `~/checkmarx-reports/` — fallback for headless Linux and containers
+
+The shared function `cx_output_dir [SUBDIR]` in `lib.sh` implements this fallback, creates the directory, and prints the resolved path. All report-writing scripts use it for their default.
+
+### Override
+
+All three report scripts accept an explicit output path:
+
+```bash
+# checkmarx.report.sh
+./checkmarx.report.sh --output-dir /tmp/reports "MyApp"
+
+# checkmarx.generate-report-data.sh
+./utils/checkmarx.generate-report-data.sh --output-dir /tmp/reports --project-id "uuid"
+
+# checkmarx.get-report.sh (full file path, not directory)
+./utils/checkmarx.get-report.sh --scan-id "uuid" --project-id "uuid" --output /tmp/my-report.pdf
+```
+
+When adding new scripts that write files, always use `cx_output_dir` for the default path. Never write output files relative to `${SCRIPT_DIR}` or the current working directory.
 
 ## Adding New Scripts
 
