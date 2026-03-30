@@ -128,13 +128,14 @@ for PID in $(echo "${PIDS_JSON}" | jq -r '.[]'); do
   PNAME=$(echo "${SCANS}" | jq -r '.[0].projectName // "unknown"')
 
   # Assign scans to buckets: for each bucket, find the latest scan whose
-  # createdAt falls within [start, end]. We use jq to do the matching.
-  PROJECT_TIMELINE=$(jq -n \
+  # createdAt falls within [start, end]. Pipe scans via stdin to avoid
+  # "Argument list too long" errors on projects with thousands of scans.
+  PROJECT_TIMELINE=$(echo "${SCANS}" | jq \
     --argjson buckets "${BUCKETS}" \
-    --argjson scans "${SCANS}" \
     --arg pid "${PID}" \
     --arg pname "${PNAME}" \
     '
+    . as $scans |
     $buckets | map(. as $bucket |
       # Find scans within this bucket
       ($scans | map(

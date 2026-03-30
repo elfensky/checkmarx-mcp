@@ -96,6 +96,10 @@ if [ -z "${PERIOD}" ]; then
   exit 1
 fi
 
+# --- Load credentials and authenticate (needed for scan-summary calls) ---
+source "${SCRIPT_DIR}/../.env"
+cx_authenticate
+
 # --- Build scope flags for scan-timeline ---
 SCOPE_FLAGS=()
 [ -n "${PROJECT_ID}" ]     && SCOPE_FLAGS+=(--project-id "${PROJECT_ID}")
@@ -140,9 +144,20 @@ fi
 
 # --- First compute severity snapshots per period (same as trend-severity),
 #     then diff consecutive periods ---
-echo "${TIMELINE}" | jq --argjson summaries "${SUMMARIES}" \
+TMP_TIMELINE=$(mktemp)
+TMP_SUMMARIES=$(mktemp)
+trap 'rm -f "${TMP_TIMELINE}" "${TMP_SUMMARIES}"' EXIT
+echo "${TIMELINE}" > "${TMP_TIMELINE}"
+echo "${SUMMARIES}" > "${TMP_SUMMARIES}"
+
+jq -n \
+  --slurpfile timeline "${TMP_TIMELINE}" \
+  --slurpfile summaries "${TMP_SUMMARIES}" \
   --argjson engine_map "${ENGINE_MAP}" \
   --arg engines "${ENGINES}" '
+  $timeline[0] as $tl |
+  $summaries[0] as $sum |
+  $tl |
 
   ($engines | split(",")) as $engine_list |
 
@@ -185,12 +200,12 @@ echo "${TIMELINE}" | jq --argjson summaries "${SUMMARIES}" \
     end;
 
   # Step 1: Build severity snapshots per period (same logic as trend-severity)
-  (group_by(.period) | sort_by(.period) | reverse | map(
+  (group_by(.period) | sort_by(.[0].period) | reverse | map(
     .[0].period as $period |
     map(
       .scanId as $sid |
       if $sid == null then null
-      else ($summaries.scansSummaries // [] | map(select(.scanId == $sid)) | .[0]) // null
+      else ($sum.scansSummaries // [] | map(select(.scanId == $sid)) | .[0]) // null
       end
     ) as $period_summaries |
     (reduce $engine_list[] as $eng (
