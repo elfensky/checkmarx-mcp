@@ -498,3 +498,28 @@ cx_format_table() {
   # Data rows
   echo "${json}" | jq -r ".[] | [${jq_fields}] | \"| \" + (map(if . == null then \"\" else tostring end) | join(\" | \")) + \" |\""
 }
+
+# ---------------------------------------------------------------------------
+# cx_output_dir [SUBDIR]
+# Returns an output directory path outside any repository.
+# Fallback chain:
+#   1. ~/Downloads/checkmarx-reports/  (if ~/Downloads exists)
+#   2. ~/checkmarx-reports/            (otherwise)
+# If SUBDIR is provided, it is appended (e.g., cx_output_dir "2026-03-30").
+# Creates the directory if it doesn't exist. Prints the path to stdout.
+# ---------------------------------------------------------------------------
+cx_output_dir() {
+  local base
+  if [ -d "${HOME}/Downloads" ]; then
+    base="${HOME}/Downloads/checkmarx-reports"
+  else
+    base="${HOME}/checkmarx-reports"
+  fi
+
+  if [ -n "${1:-}" ]; then
+    base="${base}/$1"
+  fi
+
+  mkdir -p "${base}"
+  echo "${base}"
+}
