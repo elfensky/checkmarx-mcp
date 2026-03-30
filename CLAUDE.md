@@ -35,6 +35,7 @@ Both share the same API surface and authentication layer (token caching across i
 │   ├── checkmarx.scan-timeline.sh            # Timeline: one scan per period (building block)
 │   ├── checkmarx.trend-severity.sh           # Trend: severity counts over time
 │   ├── checkmarx.trend-new-vs-fixed.sh       # Trend: period-over-period net change
+│   ├── checkmarx.generate-report-data.sh     # Power BI-ready CSV data pack
 │   ├── checkmarx.list-applications.sh
 │   ├── checkmarx.list-groups.sh
 │   ├── checkmarx.list-presets.sh
@@ -95,6 +96,11 @@ Composable, single-purpose scripts that output clean JSON to stdout. All support
 ./utils/checkmarx.trend-severity.sh --application-id "uuid" --period quarterly --range 4 --engines sast,sca
 ./utils/checkmarx.trend-new-vs-fixed.sh --project-id "uuid" --period monthly --range 6
 ./utils/checkmarx.scan-timeline.sh --project-id "uuid" --period monthly --range 6  # building block
+
+# Report data pack (Power BI / Excel)
+./utils/checkmarx.generate-report-data.sh --project-id "uuid"           # CSV data pack for one project
+./utils/checkmarx.generate-report-data.sh --application-id "uuid"       # for an application
+./utils/checkmarx.generate-report-data.sh                               # tenant-wide
 
 # Project inventory
 ./utils/checkmarx.list-projects-last-scan.sh                            # all projects with last scan

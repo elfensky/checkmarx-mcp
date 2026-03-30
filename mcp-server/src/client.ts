@@ -1005,6 +1005,91 @@ export class CheckmarxClient {
     });
   }
 
+  /**
+   * Generate a full report data pack: severity trends and new-vs-fixed
+   * deltas for all requested granularities and engines.
+   *
+   * Returns structured data ready for Power BI, Excel, or any BI tool.
+   * Each row has granularity and engine columns for slicing/filtering.
+   *
+   * @param params.projectId - Single project scope
+   * @param params.applicationId - Application scope
+   * @param params.engines - Comma-separated engine filter (default: all)
+   */
+  async generateReportData(params?: {
+    projectId?: string;
+    applicationId?: string;
+    engines?: string;
+  }) {
+    const engines = params?.engines ?? "sast,sca,kics,containers,apisec";
+    const granularities: Array<{ period: string; range: number }> = [
+      { period: "monthly", range: 12 },
+      { period: "quarterly", range: 8 },
+      { period: "yearly", range: 3 },
+    ];
+
+    const severityRows: Array<Record<string, unknown>> = [];
+    const deltaRows: Array<Record<string, unknown>> = [];
+
+    for (const { period, range } of granularities) {
+      const severity = (await this.trendSeverity({
+        projectId: params?.projectId,
+        applicationId: params?.applicationId,
+        period,
+        range,
+        engines,
+      })) as Array<Record<string, unknown>>;
+
+      const delta = (await this.trendNewVsFixed({
+        projectId: params?.projectId,
+        applicationId: params?.applicationId,
+        period,
+        range,
+        engines,
+      })) as Array<Record<string, unknown>>;
+
+      // Flatten: one row per engine per period
+      for (const entry of severity) {
+        for (const [key, value] of Object.entries(entry)) {
+          if (key === "period" || value === null || typeof value !== "object") continue;
+          severityRows.push({
+            granularity: period,
+            engine: key,
+            period: entry.period,
+            ...(value as Record<string, unknown>),
+          });
+        }
+      }
+
+      for (const entry of delta) {
+        for (const [key, value] of Object.entries(entry)) {
+          if (key === "period" || value === null || typeof value !== "object") continue;
+          deltaRows.push({
+            granularity: period,
+            engine: key,
+            period: entry.period,
+            ...(value as Record<string, unknown>),
+          });
+        }
+      }
+    }
+
+    return {
+      severity: severityRows,
+      newVsFixed: deltaRows,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        scope: params?.projectId
+          ? `project:${params.projectId}`
+          : params?.applicationId
+            ? `application:${params.applicationId}`
+            : "tenant",
+        engines: engines.split(","),
+        granularities: { monthly: 12, quarterly: 8, yearly: 3 },
+      },
+    };
+  }
+
   // -------------------------------------------------------------------------
   // API methods — Reports
   // -------------------------------------------------------------------------

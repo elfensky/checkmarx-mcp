@@ -6,7 +6,7 @@
  * Exposes the Checkmarx One REST API as MCP tools for use with
  * Claude Code, Claude Desktop, or any MCP client.
  *
- * 17 read-only tools organized into six categories:
+ * 18 read-only tools organized into six categories:
  *
  *   Projects & Inventory (3):
  *     list_projects, get_project, list_projects_last_scan
@@ -20,8 +20,8 @@
  *   SAST Analysis (3):
  *     sast_aggregate, sast_compare, get_sast_predicates
  *
- *   Trends (2):
- *     trend_severity, trend_new_vs_fixed
+ *   Trends & Reports (3):
+ *     trend_severity, trend_new_vs_fixed, generate_report_data
  *
  *   Organization & Reports (4):
  *     list_applications, list_groups, list_presets, get_report
@@ -641,6 +641,39 @@ server.tool(
         applicationId: application_id,
         period,
         range,
+        engines,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: generate_report_data
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "generate_report_data",
+  "Generate a full report data pack with severity trends and new-vs-fixed deltas across all granularities (monthly, quarterly, yearly) and engines. Returns structured data ready for Power BI, Excel, or any BI tool. Each row includes granularity and engine columns for slicing.",
+  {
+    project_id: z
+      .string()
+      .optional()
+      .describe("Single project UUID (mutually exclusive with application_id)"),
+    application_id: z
+      .string()
+      .optional()
+      .describe("Application UUID — includes all projects in the app"),
+    engines: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated engine filter. Values: sast, sca, kics, containers, apisec. Default: all"
+      ),
+  },
+  async ({ project_id, application_id, engines }) =>
+    handleTool(() =>
+      client.generateReportData({
+        projectId: project_id,
+        applicationId: application_id,
         engines,
       })
     )

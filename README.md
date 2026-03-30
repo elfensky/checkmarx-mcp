@@ -140,9 +140,22 @@ source lib.sh
 # Claude calls trend_severity, gets JSON, formats it however you ask
 ```
 
+### Power BI dashboards
+
+Generate a full data pack and import into Power BI:
+
+```bash
+# Generate CSVs for an application
+./utils/checkmarx.generate-report-data.sh --application-id "$APP_ID"
+# Output: report-data/2026-03-30/trend-severity.csv, trend-new-vs-fixed.csv, metadata.json
+
+# Open in Power BI Desktop: Get Data > Text/CSV > select the files
+# See reports/powerbi-setup.md for step-by-step dashboard configuration
+```
+
 MCP tools return JSON — Claude handles formatting conversationally ("make that a CSV", "summarize in a table").
 
-## MCP server tools (17)
+## MCP server tools (18)
 
 ### Projects and inventory
 
@@ -175,12 +188,13 @@ MCP tools return JSON — Claude handles formatting conversationally ("make that
 | `sast_compare` | Compare two scans: NEW, RECURRENT, and FIXED counts grouped by LANGUAGE or QUERY. The "what changed" report |
 | `get_sast_predicates` | Triage history for a finding by similarity ID — severity overrides, state changes, comments. For compliance reporting |
 
-### Trends
+### Trends & Reports
 
 | Tool | Description |
 |------|-------------|
 | `trend_severity` | Severity counts over time at monthly/quarterly/yearly granularity. Supports per-engine filtering and project/app/tenant scope |
 | `trend_new_vs_fixed` | Period-over-period net change in findings. Negative = improvement, positive = regression. Same scope and engine options |
+| `generate_report_data` | Full data pack: severity + net-change across all granularities and engines. Returns structured data for Power BI, Excel, or any BI tool |
 
 ### Organization
 
@@ -196,7 +210,7 @@ MCP tools return JSON — Claude handles formatting conversationally ("make that
 |------|-------------|
 | `get_report` | Generate a scan report (PDF/JSON/CSV/SARIF), poll for completion, return download URL |
 
-## CLI scripts (18)
+## CLI scripts (19)
 
 Each script outputs JSON to stdout, logs to stderr, and supports `-v`/`--verbose`.
 
@@ -216,6 +230,7 @@ Each script outputs JSON to stdout, logs to stderr, and supports `-v`/`--verbose
 | `scan-timeline.sh` | Timeline: one scan per period (building block) | `--period`, `--range`, `--project-id`, `--application-id`, `--branch` |
 | `trend-severity.sh` | Severity counts over time | `--period`, `--range`, `--project-id`, `--application-id`, `--engines` |
 | `trend-new-vs-fixed.sh` | Period-over-period net change | `--period`, `--range`, `--project-id`, `--application-id`, `--engines` |
+| `generate-report-data.sh` | Power BI-ready CSV data pack | `--project-id`, `--application-id`, `--output-dir`, `--engines` |
 | `list-applications.sh` | List applications | `--name` |
 | `list-groups.sh` | List groups | `--search` |
 | `list-presets.sh` | List SAST presets | (none) |
