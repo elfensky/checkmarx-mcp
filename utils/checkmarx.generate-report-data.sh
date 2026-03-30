@@ -27,7 +27,7 @@
 #
 # Options:
 #   -v, --verbose        Print curl commands and progress to stderr
-#   --output-dir DIR     Output directory (default: report-data/YYYY-MM-DD)
+#   --output-dir DIR     Output directory (default: ~/Downloads/checkmarx-reports/YYYY-MM-DD)
 #   --engines E          Comma-separated engine filter (default: all)
 #                        Values: sast, sca, kics, containers, apisec
 #

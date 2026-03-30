@@ -147,7 +147,8 @@ Generate a full data pack and import into Power BI:
 ```bash
 # Generate CSVs for an application
 ./utils/checkmarx.generate-report-data.sh --application-id "$APP_ID"
-# Output: report-data/2026-03-30/trend-severity.csv, trend-new-vs-fixed.csv, metadata.json
+# Output: ~/Downloads/checkmarx-reports/2026-03-30/trend-severity.csv, trend-new-vs-fixed.csv, metadata.json
+# (Falls back to ~/checkmarx-reports/ on headless Linux)
 
 # Open in Power BI Desktop: Get Data > Text/CSV > select the files
 # See reports/powerbi-setup.md for step-by-step dashboard configuration

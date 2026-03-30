@@ -30,7 +30,7 @@
 # Options:
 #   -v, --verbose      Print curl commands and polling progress to stderr
 #   --format FMT       Output format: pdf (default), json, csv, sarif
-#   --output FILE      Output filename (default: report-<scan-id-prefix>.<format>)
+#   --output FILE      Output filename (default: ~/Downloads/checkmarx-reports/report-<scan-id-prefix>.<format>)
 #
 # Output:
 #   Downloads the report file to the specified (or default) path.

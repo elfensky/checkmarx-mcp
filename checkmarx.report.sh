@@ -2,8 +2,9 @@
 #
 # Checkmarx One - CSV Report: Projects by Application
 # Generates a CSV of projects for a given application with scan metadata.
-# Usage: ./checkmarx.report.sh [-v|--verbose] [APPLICATION_NAME]
+# Usage: ./checkmarx.report.sh [-v|--verbose] [--output-dir DIR] [APPLICATION_NAME]
 #        Defaults to "OneApp" if no argument is provided.
+#        Output defaults to ~/Downloads/checkmarx-reports/ (or ~/checkmarx-reports/).
 #
 set -euo pipefail
 

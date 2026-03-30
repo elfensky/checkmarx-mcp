@@ -11,7 +11,7 @@ Step-by-step instructions for creating a Checkmarx security trends dashboard in 
 
 1. Open Power BI Desktop
 2. Click **Get Data** > **Text/CSV**
-3. Navigate to `report-data/YYYY-MM-DD/trend-severity.csv` and click **Open**
+3. Navigate to `~/Downloads/checkmarx-reports/YYYY-MM-DD/trend-severity.csv` and click **Open**
 4. In the preview dialog, verify the columns are detected correctly, then click **Load**
 5. Repeat for `trend-new-vs-fixed.csv`
 
@@ -101,7 +101,7 @@ Add KPI cards to the top of the dashboard:
 When you regenerate the CSV data pack:
 
 1. If using the same output directory: just re-run `generate-report-data.sh`, then **Refresh** in Power BI
-2. If using dated directories (`report-data/2026-03-30/`): update the data source path in Power BI:
+2. If using dated directories (`~/Downloads/checkmarx-reports/2026-03-30/`): update the data source path in Power BI:
    - **Transform Data** > **Source** step > update the file path
    - Click **Close & Apply**
 

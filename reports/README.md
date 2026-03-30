@@ -17,7 +17,7 @@ This directory contains guides for building Power BI dashboards from the trend d
 ./utils/checkmarx.generate-report-data.sh
 ```
 
-This creates a `report-data/YYYY-MM-DD/` directory with:
+This creates a `~/Downloads/checkmarx-reports/YYYY-MM-DD/` directory (or `~/checkmarx-reports/YYYY-MM-DD/` on headless systems) with:
 - `trend-severity.csv` — severity counts per engine per period
 - `trend-new-vs-fixed.csv` — period-over-period net change per engine
 - `metadata.json` — generation parameters and timestamp

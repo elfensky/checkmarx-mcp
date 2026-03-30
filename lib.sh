@@ -16,6 +16,7 @@
 #   cx_urlencode STR     — portable percent-encoding (no Python dependency)
 #   cx_resolve_project_ids — resolves scope flags to JSON array of project IDs
 #   cx_date_range P R     — generates JSON array of time buckets (monthly/quarterly/yearly)
+#   cx_output_dir [SUB]   — returns report output dir outside repo (~/Downloads/checkmarx-reports/)
 #   cx_format_csv FIELDS  — reads JSON array from stdin, outputs CSV with header
 #   cx_format_table FIELDS — reads JSON array from stdin, outputs markdown table
 #
