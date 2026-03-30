@@ -663,6 +663,349 @@ export class CheckmarxClient {
   }
 
   // -------------------------------------------------------------------------
+  // API methods — Trend Analysis
+  // -------------------------------------------------------------------------
+
+  /** Engine name → scan-summary counter key mapping. */
+  private static readonly ENGINE_MAP: Record<string, string> = {
+    sast: "sastCounters",
+    sca: "scaCounters",
+    kics: "kicsCounters",
+    containers: "scaContainersCounters",
+    apisec: "apiSecCounters",
+  };
+
+  private static readonly ALL_ENGINES = ["sast", "sca", "kics", "containers", "apisec"];
+
+  /**
+   * Resolve scope to an array of project IDs.
+   * Exactly one of projectId, applicationId, or neither (tenant-wide).
+   */
+  private async resolveProjectIds(params: {
+    projectId?: string;
+    applicationId?: string;
+  }): Promise<string[]> {
+    if (params.projectId && params.applicationId) {
+      throw new Error("Cannot specify both project_id and application_id");
+    }
+    if (params.projectId) return [params.projectId];
+
+    if (params.applicationId) {
+      const apps = await this.paginate<{ id: string; projectIds?: string[] }>(
+        "/api/applications",
+        "applications"
+      );
+      const app = apps.find((a) => a.id === params.applicationId);
+      if (!app || !app.projectIds?.length) {
+        throw new Error(
+          `Application ${params.applicationId} not found or has no projects`
+        );
+      }
+      return app.projectIds;
+    }
+
+    // Tenant-wide
+    const projects = await this.paginate<{ id: string }>(
+      "/api/projects",
+      "projects"
+    );
+    return projects.map((p) => p.id);
+  }
+
+  /**
+   * Generate time buckets for a given period and range.
+   * Returns array of {period, start, end} ordered most-recent-first.
+   */
+  private generateDateRange(
+    periodType: string,
+    range: number
+  ): Array<{ period: string; start: string; end: string }> {
+    const now = new Date();
+    const buckets: Array<{ period: string; start: string; end: string }> = [];
+
+    for (let i = 0; i < range; i++) {
+      let start: Date;
+      let end: Date;
+      let label: string;
+
+      if (periodType === "monthly") {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        start = new Date(d.getFullYear(), d.getMonth(), 1);
+        end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
+        label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      } else if (periodType === "quarterly") {
+        const curQ = Math.floor(now.getMonth() / 3);
+        const qIdx = curQ - i;
+        const year = now.getFullYear() + Math.floor(qIdx / 4);
+        const q = ((qIdx % 4) + 4) % 4;
+        start = new Date(year, q * 3, 1);
+        end = new Date(year, q * 3 + 3, 0, 23, 59, 59);
+        label = `${year}-Q${q + 1}`;
+      } else {
+        // yearly
+        const year = now.getFullYear() - i;
+        start = new Date(year, 0, 1);
+        end = new Date(year, 11, 31, 23, 59, 59);
+        label = `${year}`;
+      }
+
+      buckets.push({
+        period: label,
+        start: start.toISOString(),
+        end: end.toISOString(),
+      });
+    }
+
+    return buckets;
+  }
+
+  /**
+   * Build a scan timeline: one representative scan per project per period.
+   * Accepts pre-computed buckets to avoid clock-skew between calls.
+   */
+  private async buildTimeline(params: {
+    projectId?: string;
+    applicationId?: string;
+    period: string;
+    range: number;
+    buckets?: Array<{ period: string; start: string; end: string }>;
+  }): Promise<
+    Array<{ period: string; scanId: string | null; projectId: string }>
+  > {
+    const projectIds = await this.resolveProjectIds(params);
+    const buckets = params.buckets ?? this.generateDateRange(params.period, params.range);
+    const timeline: Array<{
+      period: string;
+      scanId: string | null;
+      projectId: string;
+    }> = [];
+
+    for (const pid of projectIds) {
+      // Fetch all completed scans for this project, sorted ascending
+      const scans = await this.paginate<{
+        id: string;
+        createdAt: string;
+      }>(`/api/scans?project-id=${pid}&statuses=Completed&sort=%2Bcreated_at`, "scans");
+
+      for (const bucket of buckets) {
+        const bucketStart = Date.parse(bucket.start);
+        const bucketEnd = Date.parse(bucket.end) + 999; // include full final second
+        const match = scans
+          .filter((s) => {
+            const t = Date.parse(s.createdAt);
+            return t >= bucketStart && t <= bucketEnd;
+          })
+          .pop(); // latest in ascending order = last
+
+        timeline.push({
+          period: bucket.period,
+          scanId: match?.id ?? null,
+          projectId: pid,
+        });
+      }
+    }
+
+    return timeline;
+  }
+
+  /**
+   * Extract severity counts from a scan-summary counter object.
+   */
+  private static extractSeverity(
+    counter: Record<string, unknown> | null
+  ): Record<string, number> | null {
+    if (!counter) return null;
+    const sevs = (counter.severityCounters ?? []) as Array<{
+      severity: string;
+      counter: number;
+    }>;
+    const counts: Record<string, number> = {
+      critical: 0, high: 0, medium: 0, low: 0, info: 0,
+    };
+    for (const s of sevs) {
+      const key = s.severity.toLowerCase();
+      if (key in counts) counts[key] = s.counter;
+    }
+    counts.total = counts.critical + counts.high + counts.medium + counts.low + counts.info;
+    return counts;
+  }
+
+  /**
+   * Severity trend over time.
+   *
+   * Returns severity counts per engine per time period. Uses scan-summary
+   * data batched across all timeline scan IDs.
+   *
+   * @param params.projectId - Single project scope
+   * @param params.applicationId - Application scope (all projects in app)
+   * @param params.period - monthly, quarterly, or yearly
+   * @param params.range - Number of periods back (default: 6)
+   * @param params.engines - Comma-separated engine filter (default: all)
+   */
+  async trendSeverity(params: {
+    projectId?: string;
+    applicationId?: string;
+    period: string;
+    range?: number;
+    engines?: string;
+  }) {
+    const range = params.range ?? 6;
+    const engineList = (params.engines ?? "sast,sca,kics,containers,apisec")
+      .split(",")
+      .map((e) => e.trim());
+
+    // Generate buckets once to avoid clock-skew between buildTimeline and output
+    const buckets = this.generateDateRange(params.period, range);
+
+    const timeline = await this.buildTimeline({
+      projectId: params.projectId,
+      applicationId: params.applicationId,
+      period: params.period,
+      range,
+      buckets,
+    });
+
+    // Collect unique non-null scan IDs
+    const scanIds = [
+      ...new Set(timeline.map((t) => t.scanId).filter((id): id is string => id !== null)),
+    ];
+
+    // Batch fetch summaries (chunked to avoid URL length limits)
+    const summaryMap: Record<string, Record<string, unknown>> = {};
+    const chunkSize = 50;
+    for (let i = 0; i < scanIds.length; i += chunkSize) {
+      const chunk = scanIds.slice(i, i + chunkSize);
+      const qs = chunk.map((id) => `scan-ids=${id}`).join("&");
+      const data = await this.get<{
+        scansSummaries?: Array<{ scanId: string } & Record<string, unknown>>;
+      }>(`/api/scan-summary?${qs}&include-severity-status=true`);
+      for (const s of data.scansSummaries ?? []) {
+        summaryMap[s.scanId] = s;
+      }
+    }
+
+    // Group timeline by period
+    const periodMap = new Map<
+      string,
+      Array<{ scanId: string | null; projectId: string }>
+    >();
+    for (const t of timeline) {
+      if (!periodMap.has(t.period)) periodMap.set(t.period, []);
+      periodMap.get(t.period)!.push(t);
+    }
+
+    // Build output: ordered by period descending (most recent first)
+    return buckets.map((bucket) => {
+      const entries = periodMap.get(bucket.period) ?? [];
+      const result: Record<string, unknown> = { period: bucket.period };
+
+      const totals: Record<string, number> = {
+        critical: 0, high: 0, medium: 0, low: 0, info: 0, total: 0,
+      };
+      let hasData = false;
+
+      for (const eng of engineList) {
+        const counterKey = CheckmarxClient.ENGINE_MAP[eng];
+        let engineTotals: Record<string, number> | null = null;
+
+        for (const entry of entries) {
+          if (!entry.scanId) continue;
+          const summary = summaryMap[entry.scanId];
+          if (!summary) continue;
+          const sev = CheckmarxClient.extractSeverity(
+            (summary[counterKey] as Record<string, unknown>) ?? null
+          );
+          if (!sev) continue;
+          hasData = true;
+          if (!engineTotals) {
+            engineTotals = { ...sev };
+          } else {
+            for (const k of Object.keys(sev)) engineTotals[k] += sev[k];
+          }
+        }
+
+        result[eng] = engineTotals;
+        if (engineTotals) {
+          for (const k of Object.keys(engineTotals)) totals[k] += engineTotals[k];
+        }
+      }
+
+      result.total = hasData ? totals : null;
+      return result;
+    });
+  }
+
+  /**
+   * New-vs-fixed trend over time (period-over-period deltas).
+   *
+   * Returns the change in severity counts between consecutive periods.
+   * Negative net_change = improvement. Positive = regression.
+   *
+   * @param params.projectId - Single project scope
+   * @param params.applicationId - Application scope
+   * @param params.period - monthly, quarterly, or yearly
+   * @param params.range - Number of periods back (default: 6)
+   * @param params.engines - Comma-separated engine filter (default: all)
+   */
+  async trendNewVsFixed(params: {
+    projectId?: string;
+    applicationId?: string;
+    period: string;
+    range?: number;
+    engines?: string;
+  }) {
+    // Get the severity snapshots first
+    const snapshots = (await this.trendSeverity(params)) as Array<
+      Record<string, unknown>
+    >;
+
+    const engineList = (params.engines ?? "sast,sca,kics,containers,apisec")
+      .split(",")
+      .map((e) => e.trim());
+
+    return snapshots.map((current, i) => {
+      if (i === snapshots.length - 1) {
+        // Oldest period: no prior to diff
+        const result: Record<string, unknown> = { period: current.period };
+        for (const eng of engineList) result[eng] = null;
+        result.total = null;
+        return result;
+      }
+
+      const prev = snapshots[i + 1];
+      const result: Record<string, unknown> = { period: current.period };
+      const totalDelta: Record<string, number> = {
+        critical: 0, high: 0, medium: 0, low: 0, info: 0, net_change: 0,
+      };
+      let hasData = false;
+
+      for (const eng of engineList) {
+        const cur = current[eng] as Record<string, number> | null;
+        const prv = prev[eng] as Record<string, number> | null;
+
+        if (!cur || !prv) {
+          result[eng] = null;
+          continue;
+        }
+
+        hasData = true;
+        const delta: Record<string, number> = {};
+        for (const sev of ["critical", "high", "medium", "low", "info"]) {
+          delta[sev] = (cur[sev] ?? 0) - (prv[sev] ?? 0);
+        }
+        delta.net_change =
+          delta.critical + delta.high + delta.medium + delta.low + delta.info;
+
+        result[eng] = delta;
+        for (const k of Object.keys(delta)) totalDelta[k] += delta[k];
+      }
+
+      result.total = hasData ? totalDelta : null;
+      return result;
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // API methods — Reports
   // -------------------------------------------------------------------------
 

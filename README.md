@@ -81,6 +81,23 @@ Compare two scans to see new, fixed, and recurrent findings:
 ./utils/checkmarx.sast-compare.sh --scan-id "$NEW_SID" --base-scan-id "$OLD_SID" --group-by QUERY
 ```
 
+### Trend analysis over time
+
+Track severity counts and net change at monthly, quarterly, or yearly granularity:
+
+```bash
+# Severity trend for a project over the last 6 months
+./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 6
+
+# Net change (are we introducing faster than fixing?) — quarterly for an entire app
+./utils/checkmarx.trend-new-vs-fixed.sh --application-id "$APP_ID" --period quarterly --range 4
+
+# Filter to specific engines
+./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 12 --engines sast,sca
+
+# Via Claude: "Show me the severity trend for MyApp over the last year, quarterly"
+```
+
 ### Triage and compliance status
 
 Check triage history and filter by finding lifecycle:
@@ -93,24 +110,39 @@ Check triage history and filter by finding lifecycle:
 ./utils/checkmarx.get-sast-predicates.sh --similarity-id "12345"
 ```
 
-### Output formatting
+### Output formats
 
-Scripts output JSON by default. Use built-in formatters for CSV or markdown:
+All scripts output **raw JSON** to stdout. No visual charts or Excel files are generated — the scripts produce structured data that you route to wherever it's needed:
+
+| Format | How | Best for |
+|--------|-----|----------|
+| **JSON** | Default output | Dashboards (Grafana, Power BI), programmatic consumption, Claude/MCP |
+| **CSV** | Pipe through `cx_format_csv` | Excel/Google Sheets — managers can make pivot tables and charts |
+| **Markdown** | Pipe through `cx_format_table` | Paste into Slack, Confluence, email |
+| **Natural language** | Via MCP tools — Claude formats the JSON conversationally | Ad-hoc manager requests ("summarize this as a table", "what's the trend?") |
 
 ```bash
-# CSV for spreadsheets
-source lib.sh
-./utils/checkmarx.sast-aggregate.sh --scan-id "$SID" --group-by SEVERITY \
-  | cx_format_csv .severity .count > report.csv
+# JSON (default) — pipe to jq, files, or dashboards
+./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 6 > trend.json
 
-# Markdown table for Slack/Confluence
-./utils/checkmarx.list-projects-last-scan.sh --application-id "$APP_ID" \
-  | cx_format_table .name .lastScanDate .status
+# CSV for Excel — open in spreadsheets, build charts there
+source lib.sh
+./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 6 \
+  | jq '[.[] | {period, critical: .total.critical, high: .total.high, medium: .total.medium}]' \
+  | cx_format_csv .period .critical .high .medium > severity-trend.csv
+
+# Markdown table — paste into Slack or Confluence
+./utils/checkmarx.trend-new-vs-fixed.sh --project-id "$PID" --period quarterly --range 4 \
+  | jq '[.[] | {period, net: .total.net_change}]' \
+  | cx_format_table .period .net
+
+# Via Claude (MCP): "Show me the severity trend for MyApp, quarterly, as a table"
+# Claude calls trend_severity, gets JSON, formats it however you ask
 ```
 
 MCP tools return JSON — Claude handles formatting conversationally ("make that a CSV", "summarize in a table").
 
-## MCP server tools (15)
+## MCP server tools (17)
 
 ### Projects and inventory
 
@@ -143,6 +175,13 @@ MCP tools return JSON — Claude handles formatting conversationally ("make that
 | `sast_compare` | Compare two scans: NEW, RECURRENT, and FIXED counts grouped by LANGUAGE or QUERY. The "what changed" report |
 | `get_sast_predicates` | Triage history for a finding by similarity ID — severity overrides, state changes, comments. For compliance reporting |
 
+### Trends
+
+| Tool | Description |
+|------|-------------|
+| `trend_severity` | Severity counts over time at monthly/quarterly/yearly granularity. Supports per-engine filtering and project/app/tenant scope |
+| `trend_new_vs_fixed` | Period-over-period net change in findings. Negative = improvement, positive = regression. Same scope and engine options |
+
 ### Organization
 
 | Tool | Description |
@@ -157,7 +196,7 @@ MCP tools return JSON — Claude handles formatting conversationally ("make that
 |------|-------------|
 | `get_report` | Generate a scan report (PDF/JSON/CSV/SARIF), poll for completion, return download URL |
 
-## CLI scripts (15)
+## CLI scripts (18)
 
 Each script outputs JSON to stdout, logs to stderr, and supports `-v`/`--verbose`.
 
@@ -174,6 +213,9 @@ Each script outputs JSON to stdout, logs to stderr, and supports `-v`/`--verbose
 | `sast-aggregate.sh` | SAST counts by category | `--scan-id`, `--group-by` (repeatable), `--severity`, `--status`, `--language` |
 | `sast-compare.sh` | Diff two scans | `--scan-id`, `--base-scan-id`, `--group-by`, `--severity`, `--status` |
 | `get-sast-predicates.sh` | Triage history | `--similarity-id`, `--project-ids`, `--scan-id` |
+| `scan-timeline.sh` | Timeline: one scan per period (building block) | `--period`, `--range`, `--project-id`, `--application-id`, `--branch` |
+| `trend-severity.sh` | Severity counts over time | `--period`, `--range`, `--project-id`, `--application-id`, `--engines` |
+| `trend-new-vs-fixed.sh` | Period-over-period net change | `--period`, `--range`, `--project-id`, `--application-id`, `--engines` |
 | `list-applications.sh` | List applications | `--name` |
 | `list-groups.sh` | List groups | `--search` |
 | `list-presets.sh` | List SAST presets | (none) |

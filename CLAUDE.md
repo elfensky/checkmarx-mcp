@@ -32,6 +32,9 @@ Both share the same API surface and authentication layer (token caching across i
 │   ├── checkmarx.sast-aggregate.sh           # SAST counts by category
 │   ├── checkmarx.sast-compare.sh             # Compare two scans (new/fixed/recurrent)
 │   ├── checkmarx.get-sast-predicates.sh      # Triage history for findings
+│   ├── checkmarx.scan-timeline.sh            # Timeline: one scan per period (building block)
+│   ├── checkmarx.trend-severity.sh           # Trend: severity counts over time
+│   ├── checkmarx.trend-new-vs-fixed.sh       # Trend: period-over-period net change
 │   ├── checkmarx.list-applications.sh
 │   ├── checkmarx.list-groups.sh
 │   ├── checkmarx.list-presets.sh
@@ -87,6 +90,12 @@ Composable, single-purpose scripts that output clean JSON to stdout. All support
 ./utils/checkmarx.sast-compare.sh --scan-id "new" --base-scan-id "old" --group-by QUERY  # scan diff
 ./utils/checkmarx.get-sast-predicates.sh --similarity-id "12345"        # triage history
 
+# Trend metrics
+./utils/checkmarx.trend-severity.sh --project-id "uuid" --period monthly --range 6
+./utils/checkmarx.trend-severity.sh --application-id "uuid" --period quarterly --range 4 --engines sast,sca
+./utils/checkmarx.trend-new-vs-fixed.sh --project-id "uuid" --period monthly --range 6
+./utils/checkmarx.scan-timeline.sh --project-id "uuid" --period monthly --range 6  # building block
+
 # Project inventory
 ./utils/checkmarx.list-projects-last-scan.sh                            # all projects with last scan
 ./utils/checkmarx.list-projects-last-scan.sh --application-id "uuid"    # filter by app
@@ -128,6 +137,11 @@ OLD_SID=$(echo "$SCANS" | jq -r '.[1].id')
 # Project inventory as markdown table
 ./utils/checkmarx.list-projects-last-scan.sh --application-id "$APP_ID" \
   | cx_format_table .name .lastScanDate .status
+
+# Severity trend as CSV for Excel charting
+./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 12 \
+  | jq '[.[] | {period, critical: .total.critical, high: .total.high, medium: .total.medium}]' \
+  | cx_format_csv .period .critical .high .medium > severity-trend.csv
 ```
 
 Token caching means only the first script in a pipeline authenticates; subsequent scripts reuse the cached token from `$TMPDIR`.

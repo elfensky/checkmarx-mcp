@@ -14,7 +14,9 @@
 #   cx_get URL           — authenticated GET with standard headers
 #   cx_paginate URL KEY  — fetches all pages, outputs merged JSON array
 #   cx_urlencode STR     — portable percent-encoding (no Python dependency)
-#   cx_format_csv FIELDS — reads JSON array from stdin, outputs CSV with header
+#   cx_resolve_project_ids — resolves scope flags to JSON array of project IDs
+#   cx_date_range P R     — generates JSON array of time buckets (monthly/quarterly/yearly)
+#   cx_format_csv FIELDS  — reads JSON array from stdin, outputs CSV with header
 #   cx_format_table FIELDS — reads JSON array from stdin, outputs markdown table
 #
 # Globals set by cx_parse_flags:
@@ -288,6 +290,121 @@ cx_paginate() {
   done
 
   echo "${all_items}"
+}
+
+# ---------------------------------------------------------------------------
+# cx_resolve_project_ids
+# Resolves scope flags to a JSON array of project IDs.
+#
+# Reads PROJECT_ID and APPLICATION_ID globals (set by the calling script).
+#   - PROJECT_ID set       → ["<PROJECT_ID>"]
+#   - APPLICATION_ID set   → fetches app, extracts projectIds[]
+#   - Neither              → fetches all projects, extracts ids
+#   - Both                 → error
+#
+# Requires: cx_authenticate must have been called.
+# Output: JSON array of project ID strings to stdout.
+# ---------------------------------------------------------------------------
+cx_resolve_project_ids() {
+  if [ -n "${PROJECT_ID:-}" ] && [ -n "${APPLICATION_ID:-}" ]; then
+    echo "ERROR: Cannot specify both --project-id and --application-id" >&2
+    return 1
+  fi
+
+  if [ -n "${PROJECT_ID:-}" ]; then
+    jq -n --arg id "${PROJECT_ID}" '[$id]'
+    return 0
+  fi
+
+  if [ -n "${APPLICATION_ID:-}" ]; then
+    local app_list
+    app_list=$(cx_paginate "${BASE}/api/applications" "applications")
+    local project_ids
+    project_ids=$(echo "${app_list}" | jq -r --arg aid "${APPLICATION_ID}" \
+      '[.[] | select(.id == $aid) | .projectIds[]?] | unique')
+    if [ "$(echo "${project_ids}" | jq 'length')" -eq 0 ]; then
+      echo "ERROR: Application ${APPLICATION_ID} not found or has no projects" >&2
+      return 1
+    fi
+    echo "${project_ids}"
+    return 0
+  fi
+
+  # Tenant-wide: fetch all project IDs
+  local all_projects
+  all_projects=$(cx_paginate "${BASE}/api/projects" "projects")
+  echo "${all_projects}" | jq '[.[].id]'
+}
+
+# ---------------------------------------------------------------------------
+# cx_date_range PERIOD RANGE
+# Pure function — no API calls. Generates a JSON array of time buckets.
+#
+# PERIOD: "monthly", "quarterly", or "yearly"
+# RANGE:  Number of periods back from the current period (default: 6)
+#
+# Output: JSON array ordered most-recent-first:
+#   [{"period": "2026-03", "start": "2026-03-01T00:00:00Z", "end": "2026-03-31T23:59:59Z"}, ...]
+#
+# Period label formats:
+#   monthly   → YYYY-MM
+#   quarterly → YYYY-Q1, YYYY-Q2, YYYY-Q3, YYYY-Q4
+#   yearly    → YYYY
+# ---------------------------------------------------------------------------
+cx_date_range() {
+  local period_type="${1:?cx_date_range requires PERIOD (monthly|quarterly|yearly)}"
+  local range="${2:-6}"
+
+  jq -n --arg period_type "${period_type}" --argjson range "${range}" '
+    def pad2: tostring | if length < 2 then "0" + . else . end;
+    def days_in_month(y; m):
+      if m == 2 then (if (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0) then 29 else 28 end)
+      elif [4,6,9,11] | index(m) then 30
+      else 31 end;
+
+    # Current date components
+    (now | strftime("%Y") | tonumber) as $cur_year |
+    (now | strftime("%m") | tonumber) as $cur_month |
+
+    if $period_type == "monthly" then
+      [range($range)] | map(. as $i |
+        # Subtract $i months from current
+        (($cur_year * 12 + $cur_month - 1 - $i) / 12 | floor) as $y |
+        (($cur_year * 12 + $cur_month - 1 - $i) % 12 + 1) as $m |
+        {
+          period: "\($y)-\($m | pad2)",
+          start: "\($y)-\($m | pad2)-01T00:00:00Z",
+          end: "\($y)-\($m | pad2)-\(days_in_month($y; $m) | pad2)T23:59:59Z"
+        }
+      )
+    elif $period_type == "quarterly" then
+      # Current quarter: Q1=1-3, Q2=4-6, Q3=7-9, Q4=10-12
+      (($cur_month - 1) / 3 | floor) as $cur_q |
+      [range($range)] | map(. as $i |
+        ($cur_q - $i) as $q_offset |
+        ($cur_year + (($q_offset) / 4 | floor)) as $y |
+        ((($q_offset % 4) + 4) % 4) as $q |
+        ($q * 3 + 1) as $start_month |
+        ($q * 3 + 3) as $end_month |
+        {
+          period: "\($y)-Q\($q + 1)",
+          start: "\($y)-\($start_month | pad2)-01T00:00:00Z",
+          end: "\($y)-\($end_month | pad2)-\(days_in_month($y; $end_month) | pad2)T23:59:59Z"
+        }
+      )
+    elif $period_type == "yearly" then
+      [range($range)] | map(. as $i |
+        ($cur_year - $i) as $y |
+        {
+          period: "\($y)",
+          start: "\($y)-01-01T00:00:00Z",
+          end: "\($y)-12-31T23:59:59Z"
+        }
+      )
+    else
+      error("cx_date_range: unknown period type: \($period_type)")
+    end
+  '
 }
 
 # ---------------------------------------------------------------------------

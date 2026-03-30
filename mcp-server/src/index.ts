@@ -6,7 +6,7 @@
  * Exposes the Checkmarx One REST API as MCP tools for use with
  * Claude Code, Claude Desktop, or any MCP client.
  *
- * 15 read-only tools organized into five categories:
+ * 17 read-only tools organized into six categories:
  *
  *   Projects & Inventory (3):
  *     list_projects, get_project, list_projects_last_scan
@@ -19,6 +19,9 @@
  *
  *   SAST Analysis (3):
  *     sast_aggregate, sast_compare, get_sast_predicates
+ *
+ *   Trends (2):
+ *     trend_severity, trend_new_vs_fixed
  *
  *   Organization & Reports (4):
  *     list_applications, list_groups, list_presets, get_report
@@ -551,6 +554,94 @@ server.tool(
         applyPredicates: apply_predicates,
         includeNodes: include_nodes,
         limit,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: trend_severity
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "trend_severity",
+  "Get severity counts over time — the 'are we getting better or worse?' trend. Returns severity breakdown per engine per time period at monthly, quarterly, or yearly granularity. Supports project, application, or tenant-wide scope. Counts are summed across projects for multi-project scopes.",
+  {
+    project_id: z
+      .string()
+      .optional()
+      .describe("Single project UUID (mutually exclusive with application_id)"),
+    application_id: z
+      .string()
+      .optional()
+      .describe("Application UUID — includes all projects in the app"),
+    period: z
+      .enum(["monthly", "quarterly", "yearly"])
+      .describe("Time granularity for the trend"),
+    range: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Number of periods back (default: 6)"),
+    engines: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated engine filter. Values: sast, sca, kics, containers, apisec. Default: all"
+      ),
+  },
+  async ({ project_id, application_id, period, range, engines }) =>
+    handleTool(() =>
+      client.trendSeverity({
+        projectId: project_id,
+        applicationId: application_id,
+        period,
+        range,
+        engines,
+      })
+    )
+);
+
+// ---------------------------------------------------------------------------
+// Tool: trend_new_vs_fixed
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "trend_new_vs_fixed",
+  "Get period-over-period net change in findings — the 'are we introducing faster than fixing?' trend. Returns the delta in severity counts between consecutive periods per engine. Negative net_change means improvement (fewer findings). Positive means regression.",
+  {
+    project_id: z
+      .string()
+      .optional()
+      .describe("Single project UUID (mutually exclusive with application_id)"),
+    application_id: z
+      .string()
+      .optional()
+      .describe("Application UUID — includes all projects in the app"),
+    period: z
+      .enum(["monthly", "quarterly", "yearly"])
+      .describe("Time granularity for the trend"),
+    range: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Number of periods back (default: 6)"),
+    engines: z
+      .string()
+      .optional()
+      .describe(
+        "Comma-separated engine filter. Values: sast, sca, kics, containers, apisec. Default: all"
+      ),
+  },
+  async ({ project_id, application_id, period, range, engines }) =>
+    handleTool(() =>
+      client.trendNewVsFixed({
+        projectId: project_id,
+        applicationId: application_id,
+        period,
+        range,
+        engines,
       })
     )
 );
