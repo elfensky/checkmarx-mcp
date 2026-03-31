@@ -3,3 +3,7 @@ report_*.csv
 report-*.csv
 report-data/
 *.pdf
+.DS_Store
+.mcp.json
+.vscode/
+WEBDOCS/

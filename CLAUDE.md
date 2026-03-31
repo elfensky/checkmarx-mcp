@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two interfaces for pulling data from the Checkmarx One REST API:
 
 1. **MCP server** (TypeScript) — 15 tools that Claude calls directly for conversational, ad-hoc queries. Returns JSON; Claude formats the output for the audience.
-2. **CLI scripts** (Bash) — 15 composable utilities that output JSON to stdout. Pipe with `jq` or use built-in `cx_format_csv`/`cx_format_table` formatters. For repeatable reports, cron jobs, and scripted pipelines.
+2. **CLI scripts** (Bash) — 17 composable utilities that output JSON to stdout. Pipe with `jq` or use built-in `cx_format_csv`/`cx_format_table` formatters. For repeatable reports, cron jobs, and scripted pipelines.
 
 Both share the same API surface and authentication layer (token caching across invocations). The repo also includes standalone demo scripts for auth flows and a CSV report generator.
 
@@ -36,6 +36,8 @@ Both share the same API surface and authentication layer (token caching across i
 │   ├── checkmarx.trend-severity.sh           # Trend: severity counts over time
 │   ├── checkmarx.trend-new-vs-fixed.sh       # Trend: period-over-period net change
 │   ├── checkmarx.generate-report-data.sh     # Power BI-ready CSV data pack
+│   ├── checkmarx.sca-packages.sh            # SCA package inventory for a scan
+│   ├── checkmarx.search-packages.sh         # Search for a package across projects
 │   ├── checkmarx.list-applications.sh
 │   ├── checkmarx.list-groups.sh
 │   ├── checkmarx.list-presets.sh
@@ -106,6 +108,17 @@ Composable, single-purpose scripts that output clean JSON to stdout. All support
 ./utils/checkmarx.list-projects-last-scan.sh                            # all projects with last scan
 ./utils/checkmarx.list-projects-last-scan.sh --application-id "uuid"    # filter by app
 
+# SCA package inventory
+./utils/checkmarx.sca-packages.sh --scan-id "uuid"                        # all packages
+./utils/checkmarx.sca-packages.sh --scan-id "uuid" --direct-only          # direct deps only
+./utils/checkmarx.sca-packages.sh --scan-id "uuid" --package "axios"      # filter by name
+./utils/checkmarx.sca-packages.sh --scan-id "uuid" --outdated-only        # outdated packages
+
+# Search for a package across projects
+./utils/checkmarx.search-packages.sh --package "log4j"                    # tenant-wide
+./utils/checkmarx.search-packages.sh --package "axios" --version "1.6.0"  # exact version
+./utils/checkmarx.search-packages.sh --package "lodash" --application-id "uuid" --direct-only
+
 # Applications, groups, presets
 ./utils/checkmarx.list-applications.sh                      # all apps
 ./utils/checkmarx.list-groups.sh --search "security"        # search groups
@@ -148,6 +161,15 @@ OLD_SID=$(echo "$SCANS" | jq -r '.[1].id')
 ./utils/checkmarx.trend-severity.sh --project-id "$PID" --period monthly --range 12 \
   | jq '[.[] | {period, critical: .total.critical, high: .total.high, medium: .total.medium}]' \
   | cx_format_csv .period .critical .high .medium > severity-trend.csv
+
+# Vulnerable direct packages for a scan as CSV
+./utils/checkmarx.sca-packages.sh --scan-id "$SID" --direct-only \
+  | jq '[.[] | select(.vulnerabilities > 0)] | sort_by(-.vulnerabilities)' \
+  | cx_format_csv .name .version .packageManager .vulnerabilities
+
+# Find all projects using a specific package
+./utils/checkmarx.search-packages.sh --package "axios" \
+  | jq '[.[].projectName] | unique'
 ```
 
 Token caching means only the first script in a pipeline authenticates; subsequent scripts reuse the cached token from `$TMPDIR`.
@@ -197,7 +219,7 @@ Token caching via `$TMPDIR` means only the first script in a pipeline authentica
 
 ### API coverage
 
-The tools cover five Checkmarx One API areas:
+The tools cover six Checkmarx One API areas:
 
 | API | Endpoints wrapped | Scripts/Tools |
 |-----|-------------------|---------------|
@@ -205,6 +227,7 @@ The tools cover five Checkmarx One API areas:
 | Scans | `/api/scans`, `/api/scan-summary` | `list_scans`, `get_scan`, `scan_summary` |
 | Results | `/api/results`, `/api/sast-results` | `list_results`, `list_sast_results` |
 | SAST Analysis | `/api/sast-scan-summary/aggregate`, `/compare/aggregate`, `/api/sast-results-predicates` | `sast_aggregate`, `sast_compare`, `get_sast_predicates` |
+| SCA Analysis | `/api/sca/risk-management/risk-reports/{id}/export` | `sca_packages`, `search_packages` |
 | Organization | `/api/applications`, `/api/access-management/groups`, `/api/queries/presets`, `/api/reports` | `list_applications`, `list_groups`, `list_presets`, `get_report` |
 
 All operations are **read-only** (GET requests only). No write/mutate operations are exposed.
@@ -345,3 +368,24 @@ When adding a new utility script in `utils/`:
 - Full REST API docs: https://checkmarx.stoplight.io/docs/checkmarx-one-api-reference-guide
 - CLI docs: https://docs.checkmarx.com/en/34965-68625-checkmarx-one-cli-commands.html
 - CLI source: https://github.com/Checkmarx/ast-cli
+
+
+## Verification
+
+Report outcomes faithfully: if tests fail, say so with the relevant output; if you did not run a verification step, say that rather than implying it succeeded. Never claim "all tests pass" when output shows failures, never suppress or simplify failing checks (tests, lints, type errors) to manufacture a green result, and never characterize incomplete or broken work as done.
+
+After completing edits, run the project's test/typecheck/lint commands before reporting success. If none are configured, say so explicitly.
+
+## Large Files
+
+When reading files over 500 lines, use offset and limit parameters to read in chunks. Don't assume a single read captured the entire file.
+
+## Search Completeness
+
+When renaming or changing a function/type/variable, search for: direct calls, type references, string literals containing the name, re-exports, barrel files, and test mocks. Don't assume a single grep found everything.
+
+## File & Function Size
+
+- Prefer files under 500-800 LOC; split files over 1000 LOC before making major changes
+- Prefer functions under 100 lines; refactor functions over 200 lines before modifying
+- Prioritize cohesion (one responsibility per file), clear boundaries, and readability over compactness
